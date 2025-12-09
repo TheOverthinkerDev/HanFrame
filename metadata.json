@@ -1,0 +1,5 @@
+{
+  "name": "Lumina Edit",
+  "description": "A professional-grade, browser-based photo editor supporting batch processing, granular color adjustments, and freeform cropping without AI dependencies.",
+  "requestFramePermissions": []
+}
