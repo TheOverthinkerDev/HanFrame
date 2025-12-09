@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Sidebar } from './components/Sidebar';
 import { Filmstrip } from './components/Filmstrip';
@@ -6,8 +6,8 @@ import { CanvasView } from './components/CanvasView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ProcessingModal } from './components/ProcessingModal';
 import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData } from './types';
-import { createThumbnail, isHeic, convertHeicToJpeg, rotateImage } from './utils/processor';
-import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2 } from 'lucide-react';
+import { createThumbnail, isHeic, convertHeicToJpeg } from './utils/processor';
+import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud } from 'lucide-react';
 import { useHistory } from './hooks/useHistory';
 
 export default function App() {
@@ -29,6 +29,9 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [processingMessage, setProcessingMessage] = useState('');
+
+  // Drag & Drop State
+  const [isDragging, setIsDragging] = useState(false);
 
   // Crop state
   const [isCropMode, setIsCropMode] = useState(false);
@@ -78,18 +81,10 @@ export default function App() {
 
   // --- Handlers ---
 
-  const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
+  const processFiles = async (files: File[]) => {
+    if (files.length === 0) return;
     
     const newPhotos: Photo[] = [];
-    const fileList = e.target.files;
-    const files: File[] = [];
-    if (fileList) {
-        for (let i = 0; i < fileList.length; i++) {
-            const item = fileList.item(i);
-            if (item) files.push(item);
-        }
-    }
     
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -119,6 +114,7 @@ export default function App() {
           thumbnailUrl: thumb.url,
           width: thumb.width,
           height: thumb.height,
+          rotation: 0,
           adjustments: { ...DEFAULT_ADJUSTMENTS },
           crop: null
         });
@@ -128,29 +124,67 @@ export default function App() {
       }
     }
 
-    // Push new photos to history
-    pushHistory([...photos, ...newPhotos]);
-
-    if (!selectedId && newPhotos.length > 0) {
-      setSelectedId(newPhotos[0].id);
+    if (newPhotos.length > 0) {
+      pushHistory([...photos, ...newPhotos]);
+      if (!selectedId) {
+        setSelectedId(newPhotos[0].id);
+      }
     }
-    e.target.value = '';
   };
+
+  const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    
+    const fileList = e.target.files;
+    const files: File[] = [];
+    if (fileList) {
+        for (let i = 0; i < fileList.length; i++) {
+            const item = fileList.item(i);
+            if (item) files.push(item);
+        }
+    }
+    
+    await processFiles(files);
+    e.target.value = ''; // Reset input
+  };
+
+  // Drag & Drop Handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  }, [isDragging]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set dragging to false if we leave the main container
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files: File[] = [];
+    const fileList = e.dataTransfer.files;
+    for (let i = 0; i < fileList.length; i++) {
+        const f = fileList[i];
+        if (f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.heic')) {
+            files.push(f);
+        }
+    }
+
+    if (files.length > 0) {
+        await processFiles(files);
+    }
+  }, [photos, selectedId, pushHistory]); // Dependencies for processFiles logic closure
 
   const handleRemovePhoto = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const newPhotos = photos.filter(p => p.id !== id);
-    const removed = photos.find(p => p.id === id);
-    
-    // Revoke URLs to avoid memory leaks
-    if (removed) {
-        // Ideally we only revoke if we are sure it's not in undo stack,
-        // but for a simple browser app, let's keep it safe or rely on GC.
-        // Actually, revoking here breaks Undo. 
-        // Better to NOT revoke immediately in an Undo-based app, or clone blobs.
-        // For this demo, we will skip manual revocation to enable Undo.
-    }
-
     pushHistory(newPhotos);
     if (selectedId === id) setSelectedId(null);
   };
@@ -197,41 +231,44 @@ export default function App() {
   const handleResetAdjustments = () => {
     if (!selectedId) return;
     const newPhotos = photos.map(p => 
-      p.id === selectedId ? { ...p, adjustments: { ...DEFAULT_ADJUSTMENTS }, crop: null } : p
+      p.id === selectedId ? { ...p, adjustments: { ...DEFAULT_ADJUSTMENTS }, crop: null, rotation: 0 } : p
     );
     pushHistory(newPhotos);
     addToast('success', 'Reset successfully');
   };
 
-  const handleRotate = async () => {
-     if (!selectedId || !selectedPhoto) return;
-     
-     setIsProcessing(true);
-     setProcessingMessage('Rotating...');
-     try {
-         const { url, width, height } = await rotateImage(selectedPhoto.originalUrl, 90);
-         const thumb = await createThumbnail(url);
-         
-         const newPhotos = photos.map(p => {
-             if (p.id === selectedId) {
-                 return {
-                     ...p,
-                     originalUrl: url,
-                     thumbnailUrl: thumb.url,
-                     width,
-                     height,
-                     crop: null // Reset crop on rotate to avoid bounds issues
-                 };
-             }
-             return p;
-         });
-         
-         pushHistory(newPhotos);
-     } catch (e) {
-         addToast('error', 'Rotation failed');
-     } finally {
-         setIsProcessing(false);
-     }
+  const handleRotateLeft = () => {
+      if (!selectedId) return;
+      const newPhotos = photos.map(p => {
+          if (p.id === selectedId) {
+              const current = p.rotation || 0;
+              // -90 degrees
+              return { 
+                  ...p, 
+                  rotation: (current - 90 + 360) % 360,
+                  crop: null // Reset crop on rotate to avoid alignment issues
+              };
+          }
+          return p;
+      });
+      pushHistory(newPhotos);
+  };
+
+  const handleRotateRight = () => {
+      if (!selectedId) return;
+      const newPhotos = photos.map(p => {
+          if (p.id === selectedId) {
+              const current = p.rotation || 0;
+              // +90 degrees
+              return { 
+                  ...p, 
+                  rotation: (current + 90) % 360,
+                  crop: null 
+              };
+          }
+          return p;
+      });
+      pushHistory(newPhotos);
   };
 
   // Batch Handlers
@@ -278,21 +315,30 @@ export default function App() {
     const targetRatio = getRatio(aspectRatio);
 
     await runBatchOperation(`Cropping to ${aspectRatio}...`, (p) => {
-        let width = p.width;
-        let height = p.height;
+        // We need to account for rotation when calculating batch crop!
+        const rot = p.rotation || 0;
+        const isVertical = rot % 180 !== 0;
+        
+        let width = isVertical ? p.height : p.width;
+        let height = isVertical ? p.width : p.height;
+        
         const currentRatio = width / height;
         
+        // Calculate crop relative to the VISIBLE (Rotated) dimensions
+        let cropW = width;
+        let cropH = height;
+
         if (currentRatio > targetRatio) {
-            width = height * targetRatio;
+            cropW = height * targetRatio;
         } else {
-            height = width / targetRatio;
+            cropH = width / targetRatio;
         }
-        const x = (p.width - width) / 2;
-        const y = (p.height - height) / 2;
+        const x = (width - cropW) / 2;
+        const y = (height - cropH) / 2;
 
         return {
             ...p,
-            crop: { x, y, width, height }
+            crop: { x, y, width: cropW, height: cropH }
         };
     });
     
@@ -308,14 +354,6 @@ export default function App() {
       setPhotos(newPhotos);
   };
   
-  // We need to commit crop to history only when drag ends. 
-  // Since CanvasView handles the drag interaction internally and calls onUpdateCrop frequently,
-  // we might need to modify CanvasView to support onCommit, OR just assume that 'crop' updates 
-  // are frequent and we debounce history? 
-  // For simplicity: We will just push history on every crop update for now, 
-  // OR we can rely on the fact that CanvasView calls onUpdateCrop on PointerUp.
-  // Looking at CanvasView implementation: `onUpdateCrop` is called on `handlePointerUp`.
-  // So it is safe to push history here.
   const handleCropCommit = (crop: CropData | null) => {
       if (!selectedId) return;
        const newPhotos = photos.map(p => 
@@ -324,22 +362,36 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
-
   const handleDownload = () => {
       addToast('success', 'Export started... (Demo)');
   };
 
   return (
-    <div className="flex flex-col h-screen bg-black text-white overflow-hidden selection:bg-blue-500 selection:text-white">
+    <div 
+      className="flex flex-col h-screen bg-black text-white overflow-hidden selection:bg-blue-500 selection:text-white"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <ToastContainer toasts={toasts} removeToast={removeToast} />
       <ProcessingModal isOpen={isProcessing} message={processingMessage} progress={progress} />
       
+      {/* Drag Drop Overlay */}
+      {isDragging && (
+          <div className="fixed inset-0 z-50 bg-blue-600/20 backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl flex items-center justify-center pointer-events-none">
+              <div className="bg-zinc-950 p-6 rounded-2xl flex flex-col items-center shadow-2xl animate-bounce">
+                  <UploadCloud size={48} className="text-blue-500 mb-2" />
+                  <span className="text-xl font-bold">Drop photos to upload</span>
+              </div>
+          </div>
+      )}
+
       {/* Top Bar */}
-      <header className="h-12 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-4 z-20">
+      <header className="h-12 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0">
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
                 <Sparkles className="text-blue-500" size={20} />
-                <h1 className="font-bold text-lg tracking-tight">Lumina</h1>
+                <h1 className="font-bold text-lg tracking-tight">HanFrame</h1>
             </div>
 
             {/* Undo/Redo Controls */}
@@ -348,7 +400,7 @@ export default function App() {
                     onClick={undo} 
                     disabled={!canUndo}
                     className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-400 hover:text-white transition-all"
-                    title="Undo (Ctrl+Z)"
+                    title="Undo"
                 >
                     <Undo2 size={16} />
                 </button>
@@ -356,7 +408,7 @@ export default function App() {
                     onClick={redo} 
                     disabled={!canRedo}
                     className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-400 hover:text-white transition-all"
-                    title="Redo (Ctrl+Y)"
+                    title="Redo"
                 >
                     <Redo2 size={16} />
                 </button>
@@ -383,21 +435,21 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         
         {/* Center Canvas Area */}
-        <main className="flex-1 flex flex-col relative">
+        <main className="flex-1 flex flex-col relative bg-zinc-950/50">
           {selectedPhoto ? (
             <CanvasView 
               photo={selectedPhoto} 
               isCropMode={isCropMode}
-              // CanvasView calls this on PointerUp (Drag End)
               onUpdateCrop={handleCropCommit} 
               aspectRatio={aspectRatio}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
-               <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center mb-4">
-                  <ImageIcon size={32} />
+               <div className="w-20 h-20 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6">
+                  <ImageIcon size={40} className="opacity-50" />
                </div>
-               <p className="text-sm">Import photos to start editing</p>
+               <h3 className="text-lg font-medium text-zinc-400 mb-2">No photo selected</h3>
+               <p className="text-sm text-zinc-600">Drag & drop photos here or use the add button below</p>
             </div>
           )}
 
@@ -417,7 +469,8 @@ export default function App() {
           adjustments={selectedPhoto?.adjustments || DEFAULT_ADJUSTMENTS}
           onChange={handleAdjustmentChange}
           onCommit={handleAdjustmentCommit}
-          onRotate={handleRotate}
+          onRotateLeft={handleRotateLeft}
+          onRotateRight={handleRotateRight}
           onAuto={handleAutoAdjust}
           onReset={handleResetAdjustments}
           isCropMode={isCropMode}

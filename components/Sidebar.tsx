@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Adjustments, Photo, AspectRatio } from '../types';
 import { Slider } from './Slider';
-import { Wand2, RotateCcw, Crop, Layers, Scissors, Zap } from 'lucide-react';
+import { Wand2, RotateCcw, RotateCw, Crop, Layers, Scissors, Zap, ChevronDown, ChevronRight, Sun, Palette, Layout } from 'lucide-react';
 
 interface SidebarProps {
   photo: Photo | null;
   adjustments: Adjustments;
   onChange: (key: keyof Adjustments, value: number) => void;
-  onCommit: () => void; // Trigger history save
-  onRotate: () => void;
+  onCommit: () => void; 
+  onRotateLeft: () => void;
+  onRotateRight: () => void;
   onAuto: () => void;
   onReset: () => void;
   isCropMode: boolean;
@@ -20,12 +21,44 @@ interface SidebarProps {
   onBatchAuto: () => void;
 }
 
+const SidebarSection: React.FC<{ 
+    title: string; 
+    icon: React.ReactNode; 
+    children: React.ReactNode; 
+    defaultOpen?: boolean;
+    rightAction?: React.ReactNode;
+}> = ({ title, icon, children, defaultOpen = false, rightAction }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    return (
+        <div className="border-b border-zinc-800">
+            <div 
+                className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-900 transition-colors select-none"
+                onClick={() => setIsOpen(!isOpen)}
+            >
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
+                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    <span className="flex items-center gap-2 text-zinc-300">{icon} {title}</span>
+                </div>
+                {rightAction && <div onClick={e => e.stopPropagation()}>{rightAction}</div>}
+            </div>
+            
+            {isOpen && (
+                <div className="p-4 bg-zinc-950/50 animate-in slide-in-from-top-2 fade-in duration-200">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+};
+
 export const Sidebar: React.FC<SidebarProps> = ({ 
   photo, 
   adjustments, 
   onChange,
   onCommit,
-  onRotate,
+  onRotateLeft,
+  onRotateRight,
   onAuto, 
   onReset,
   isCropMode,
@@ -48,30 +81,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div className="w-80 border-l border-zinc-800 bg-zinc-950 flex flex-col h-full overflow-hidden">
       
       {/* Top Header */}
-      <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950 sticky top-0 z-10">
-        <h2 className="font-semibold text-zinc-100">Adjustments</h2>
-        <div className="flex space-x-2">
-          <button 
+      <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950 sticky top-0 z-10 shrink-0">
+        <h2 className="font-semibold text-zinc-100">Editor</h2>
+        <button 
             onClick={onAuto}
-            className="p-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white transition-colors flex items-center gap-1 text-xs font-medium"
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide"
             title="Auto adjust current photo"
-          >
-            <Wand2 size={14} /> AUTO
-          </button>
-        </div>
+        >
+            <Wand2 size={12} /> Auto
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-8">
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
 
-        {/* BATCH ACTIONS ZONE */}
-        <section className="bg-zinc-900/40 border border-zinc-800 rounded-lg p-3">
-            <h3 className="text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-3 flex items-center gap-1">
-                <Layers size={12} /> Batch Actions (All Photos)
-            </h3>
+        {/* BATCH ACTIONS */}
+        <SidebarSection title="Batch Actions" icon={<Layers size={14} />} defaultOpen={false}>
             <div className="grid grid-cols-1 gap-2">
                 <button 
                     onClick={onBatchAuto}
-                    className="w-full py-2 px-3 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-200 flex items-center justify-center gap-2 border border-zinc-700/50 transition-colors"
+                    className="w-full py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 flex items-center justify-center gap-2 border border-zinc-800 transition-colors"
                 >
                     <Zap size={14} className="text-yellow-500" /> Auto Adjust All
                 </button>
@@ -79,32 +107,83 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex gap-2">
                     <button 
                         onClick={onBatchApply}
-                        className="flex-1 py-2 px-3 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-300 border border-zinc-700/50 transition-colors"
+                        className="flex-1 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-800 transition-colors"
                         title="Copy current settings to all"
                     >
                         Sync Settings
                     </button>
                     <button 
                          onClick={onBatchCrop}
-                         className="flex-1 py-2 px-3 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-300 border border-zinc-700/50 transition-colors flex items-center justify-center gap-1"
+                         className="flex-1 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-800 transition-colors flex items-center justify-center gap-1"
                          title="Apply selected aspect ratio to all"
                      >
                          <Scissors size={12} /> Crop All
                      </button>
                 </div>
             </div>
-        </section>
+        </SidebarSection>
         
-        {/* Light Section */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-             <h3 className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Light</h3>
-             <button onClick={() => {
-               onChange('exposure', 0);
-               onChange('contrast', 0);
-               onCommit(); // Commit immediately on button reset
-             }} className="text-xs text-zinc-600 hover:text-zinc-400">Reset</button>
-          </div>
+        {/* CROP & ROTATE */}
+        <SidebarSection title="Crop & Rotate" icon={<Layout size={14} />} defaultOpen={isCropMode}>
+            <div className="space-y-4">
+                <div className="flex gap-2">
+                    <button 
+                    onClick={toggleCropMode}
+                    className={`flex-1 py-2 px-3 rounded text-sm font-medium border flex items-center justify-center gap-2 transition-all ${isCropMode ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'}`}
+                    >
+                    <Crop size={14} /> {isCropMode ? 'Done' : 'Crop'}
+                    </button>
+                    <button 
+                    onClick={onRotateLeft}
+                    className="py-2 px-3 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+                    title="Rotate Left"
+                    >
+                    <RotateCcw size={16} />
+                    </button>
+                    <button 
+                    onClick={onRotateRight}
+                    className="py-2 px-3 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+                    title="Rotate Right"
+                    >
+                    <RotateCw size={16} />
+                    </button>
+                </div>
+                
+                {isCropMode && (
+                    <div className="grid grid-cols-3 gap-2 animate-in fade-in slide-in-from-top-1">
+                    {['Free', '1:1', '16:9', '4:3', '3:2'].map((ratio) => (
+                        <button
+                        key={ratio}
+                        onClick={() => setAspectRatio(ratio as AspectRatio)}
+                        className={`text-xs py-1.5 rounded border ${currentAspectRatio === ratio ? 'bg-zinc-800 border-zinc-600 text-white' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'}`}
+                        >
+                        {ratio}
+                        </button>
+                    ))}
+                    </div>
+                )}
+                {isCropMode && currentAspectRatio === 'Free' && (
+                    <p className="text-[10px] text-zinc-500 italic text-center">Select a fixed ratio to enable batch crop.</p>
+                )}
+           </div>
+        </SidebarSection>
+
+        {/* LIGHT */}
+        <SidebarSection 
+            title="Light" 
+            icon={<Sun size={14} />} 
+            defaultOpen={true}
+            rightAction={
+                <button onClick={(e) => {
+                    e.stopPropagation();
+                    onChange('exposure', 0);
+                    onChange('contrast', 0);
+                    onCommit();
+                  }} className="text-[10px] text-zinc-600 hover:text-zinc-400 px-2 py-1">
+                    Reset
+                </button>
+            }
+        >
           <Slider 
             label="Exposure" 
             value={adjustments.exposure} 
@@ -119,23 +198,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onAfterChange={onCommit}
             onReset={() => { onChange('contrast', 0); onCommit(); }}
           />
-        </section>
+        </SidebarSection>
 
-        {/* Color Section */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-             <h3 className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Color</h3>
-             <button onClick={() => {
-               onChange('temperature', 0);
-               onChange('tint', 0);
-               onChange('vibrance', 0);
-               onChange('saturation', 0);
-               onCommit();
-             }} className="text-xs text-zinc-600 hover:text-zinc-400">Reset</button>
-          </div>
-          
+        {/* COLOR */}
+        <SidebarSection 
+            title="Color" 
+            icon={<Palette size={14} />} 
+            defaultOpen={true}
+            rightAction={
+                <button onClick={(e) => {
+                    e.stopPropagation();
+                    onChange('temperature', 0);
+                    onChange('tint', 0);
+                    onChange('vibrance', 0);
+                    onChange('saturation', 0);
+                    onCommit();
+                  }} className="text-[10px] text-zinc-600 hover:text-zinc-400 px-2 py-1">
+                    Reset
+                </button>
+            }
+        >
           <div className="space-y-6">
-            <div className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800/50">
+            <div className="bg-zinc-900/40 p-3 rounded-lg border border-zinc-800/50">
                <Slider 
                 label="Temp" 
                 value={adjustments.temperature} 
@@ -170,52 +254,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onReset={() => { onChange('saturation', 0); onCommit(); }}
             />
           </div>
-        </section>
-
-        {/* Crop Section */}
-        <section>
-           <div className="flex items-center justify-between mb-4">
-              <h3 className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Crop & Rotate</h3>
-           </div>
-           
-           <div className="flex gap-2">
-             <button 
-               onClick={toggleCropMode}
-               className={`flex-1 py-2 px-3 rounded text-sm font-medium border flex items-center justify-center gap-2 transition-all ${isCropMode ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'}`}
-             >
-               <Crop size={14} /> {isCropMode ? 'Done' : 'Crop'}
-             </button>
-             <button 
-               onClick={onRotate}
-               className="py-2 px-3 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 hover:bg-zinc-700"
-               title="Rotate 90deg Clockwise"
-             >
-               <RotateCcw size={16} />
-             </button>
-           </div>
-           
-           {isCropMode && (
-             <div className="mt-4 grid grid-cols-3 gap-2">
-               {['Free', '1:1', '16:9', '4:3', '3:2'].map((ratio) => (
-                 <button
-                   key={ratio}
-                   onClick={() => setAspectRatio(ratio as AspectRatio)}
-                   className={`text-xs py-1.5 rounded border ${currentAspectRatio === ratio ? 'bg-zinc-700 border-zinc-500 text-white' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}
-                 >
-                   {ratio}
-                 </button>
-               ))}
-             </div>
-           )}
-           {isCropMode && currentAspectRatio === 'Free' && (
-               <p className="text-[10px] text-zinc-500 mt-2 italic">Select a ratio to enable batch crop.</p>
-           )}
-        </section>
+        </SidebarSection>
 
       </div>
 
-      <div className="p-4 border-t border-zinc-800 bg-zinc-950">
-        <button onClick={onReset} className="w-full py-2 rounded border border-zinc-700 text-zinc-400 text-sm hover:text-white hover:border-zinc-500 transition-colors">
+      <div className="p-4 border-t border-zinc-800 bg-zinc-950 shrink-0">
+        <button onClick={onReset} className="w-full py-2 rounded border border-zinc-800 bg-zinc-900 text-zinc-400 text-xs hover:text-white hover:border-zinc-700 transition-colors">
           Reset All Settings
         </button>
       </div>

@@ -21,6 +21,7 @@ export interface Photo {
   thumbnailUrl: string; // Smaller version for UI
   width: number;
   height: number;
+  rotation: number; // 0, 90, 180, 270
   adjustments: Adjustments;
   crop: CropData | null;
 }
