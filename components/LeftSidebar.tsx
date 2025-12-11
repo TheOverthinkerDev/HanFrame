@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Frame, Plus, Trash2, Image as ImageIcon, XCircle, Stamp, Layers, Copy } from 'lucide-react';
+import { Frame, Plus, Trash2, Image as ImageIcon, XCircle, Stamp, Layers, Copy, X } from 'lucide-react';
 
 interface LeftSidebarProps {
   // Frame props
@@ -72,27 +72,23 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                     <input type="file" className="hidden" accept="image/png,image/webp" onChange={onUploadFrame} />
                 </label>
 
-                {/* Batch Action */}
+                {/* Batch Action & Remove Action */}
                 {activeFrame && (
-                    <button 
-                        onClick={onBatchFrame}
-                        className="w-full mb-4 py-2 px-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs rounded border border-zinc-200 dark:border-zinc-700 flex items-center justify-center gap-2 transition-colors"
-                    >
-                        <Copy size={12} /> Apply Frame to All
-                    </button>
-                )}
-
-                {/* No Frame Option */}
-                <div 
-                    onClick={() => onSelectFrame(null)}
-                    className={`relative w-full aspect-square mb-3 rounded-lg cursor-pointer border-2 transition-all flex items-center justify-center bg-zinc-100 dark:bg-zinc-900 ${activeFrame === null ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-transparent hover:border-zinc-300 dark:hover:border-zinc-700'}`}
-                    title="No Frame"
-                >
-                    <div className="flex flex-col items-center gap-1 text-zinc-400">
-                        <XCircle size={24} />
-                        <span className="text-[10px] hidden md:block">None</span>
+                    <div className="mb-4 space-y-2">
+                        <button 
+                            onClick={() => onSelectFrame(null)}
+                            className="w-full py-2 px-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 text-xs rounded border border-red-200 dark:border-red-900/50 flex items-center justify-center gap-2 transition-colors"
+                        >
+                            <X size={12} /> Remove Current Frame
+                        </button>
+                        <button 
+                            onClick={onBatchFrame}
+                            className="w-full py-2 px-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs rounded border border-zinc-200 dark:border-zinc-700 flex items-center justify-center gap-2 transition-colors"
+                        >
+                            <Copy size={12} /> Apply Frame to All
+                        </button>
                     </div>
-                </div>
+                )}
 
                 {/* Frame List */}
                 <div className="grid grid-cols-1 gap-3">
@@ -109,6 +105,7 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                             <button 
                                 onClick={(e) => { e.stopPropagation(); onDeleteFrame(url); }}
                                 className="absolute top-1 right-1 z-20 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
+                                title="Delete from Library"
                             >
                                 <Trash2 size={12} />
                             </button>

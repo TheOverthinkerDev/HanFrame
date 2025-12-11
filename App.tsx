@@ -7,7 +7,7 @@ import { CanvasView } from './components/CanvasView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ProcessingModal } from './components/ProcessingModal';
 import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData, LogoLayer } from './types';
-import { createThumbnail, isHeic, convertHeicToJpeg } from './utils/processor';
+import { createThumbnail, isHeic, convertHeicToJpeg, formatBytes, calculateReadableRatio } from './utils/processor';
 import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud, Moon, Sun } from 'lucide-react';
 import { useHistory } from './hooks/useHistory';
 import { useTheme } from './hooks/useTheme';
@@ -228,13 +228,14 @@ export default function App() {
   const handleBatchFrame = async () => {
     if (!selectedPhoto) return;
     const frame = selectedPhoto.frameOverlay;
-    if (!frame) return;
-
-    await runBatchOperation('Applying Frame...', (p) => ({
+    // Even if frame is null (removed), we might want to sync removal, but usually 'Apply Frame' implies applying a specific one.
+    // If active frame is null, we can treat it as 'Remove Frame from All'
+    
+    await runBatchOperation(frame ? 'Applying Frame...' : 'Removing Frame...', (p) => ({
       ...p,
       frameOverlay: frame
     }));
-    addToast('success', `Frame applied to ${photos.length} photos`);
+    addToast('success', `Frame updated for ${photos.length} photos`);
   };
   
   // --- Logo Handlers ---
@@ -271,15 +272,27 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
+  // Updated purely for real-time dragging visual feedback
   const handleUpdateLogos = (logos: LogoLayer[]) => {
       if (!selectedId) return;
-      // Used for real-time dragging (no history push yet)
       setPhotos(photos.map(p => {
           if (p.id === selectedId) {
               return { ...p, logos };
           }
           return p;
       }));
+  };
+
+  // Updates logos AND pushes to history (for reordering/deleting)
+  const handleLogosChange = (logos: LogoLayer[]) => {
+      if (!selectedId) return;
+      const newPhotos = photos.map(p => {
+          if (p.id === selectedId) {
+              return { ...p, logos };
+          }
+          return p;
+      });
+      pushHistory(newPhotos);
   };
 
   const handleCommitLogos = () => {
@@ -289,13 +302,20 @@ export default function App() {
 
   const handleBatchLogo = async () => {
     if (!selectedPhoto) return;
-    const logos = selectedPhoto.logos;
-    if (logos.length === 0) return;
+    const sourceLogos = selectedPhoto.logos;
 
-    await runBatchOperation('Syncing Logos...', (p) => ({
-      ...p,
-      logos: [...logos] // Shallow copy array, objects are immutable enough for this context
-    }));
+    await runBatchOperation('Syncing Logos...', (p) => {
+        // Must generate unique IDs for each logo on each photo to prevent reference issues
+        const newLogos = sourceLogos.map(l => ({
+            ...l,
+            id: uuidv4()
+        }));
+        
+        return {
+            ...p,
+            logos: newLogos
+        };
+    });
     addToast('success', `Logos synced to ${photos.length} photos`);
   };
 
@@ -391,18 +411,18 @@ export default function App() {
   // Batch Handlers
   const handleBatchApply = async () => {
     if (!selectedPhoto) return;
-    const settings = { ...selectedPhoto.adjustments };
-    const frame = selectedPhoto.frameOverlay;
-    // Copy logos too? Maybe tricky if dimensions differ, but let's do it for consistency
-    const logos = [...selectedPhoto.logos];
     
-    await runBatchOperation('Syncing Settings...', (p) => ({
-        ...p,
-        adjustments: { ...settings },
-        frameOverlay: frame,
-        logos: [...logos] // Deep copy needed if logos were objects, but structure is simple enough
-    }));
-    addToast('success', `Synced settings to ${photos.length} photos`);
+    // Capture state to sync (Only adjustments)
+    const settings = { ...selectedPhoto.adjustments };
+    
+    await runBatchOperation('Syncing Adjustments...', (p) => {
+        return {
+            ...p,
+            adjustments: { ...settings }
+            // Do NOT sync frameOverlay or logos
+        };
+    });
+    addToast('success', `Synced adjustments to ${photos.length} photos`);
   };
 
   const handleBatchAutoAdjust = async () => {
@@ -538,11 +558,24 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-           {/* Info updated in CanvasView but kept simple here or removed if redundant. 
-               Let's keep name/size here as a backup or summary. 
-               The user asked for info in the 'top left corner of the edit screen'. 
-               I will add an overlay in CanvasView and keep this clean. 
-           */}
+           {selectedPhoto && (
+             <span className="text-xs text-zinc-500 font-mono hidden md:block">
+              {(() => {
+                  let w, h;
+                  if (selectedPhoto.crop) {
+                      w = Math.round(selectedPhoto.crop.width);
+                      h = Math.round(selectedPhoto.crop.height);
+                  } else {
+                      const rot = selectedPhoto.rotation || 0;
+                      const isVert = (rot / 90) % 2 !== 0;
+                      w = isVert ? selectedPhoto.height : selectedPhoto.width;
+                      h = isVert ? selectedPhoto.width : selectedPhoto.height;
+                  }
+                  return `${w}x${h} • ${calculateReadableRatio(w, h)} • ${formatBytes(selectedPhoto.sizeInBytes)}`;
+              })()}
+             </span>
+           )}
+
             <button
                 onClick={toggleTheme}
                 className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors"
@@ -590,6 +623,7 @@ export default function App() {
               aspectRatio={aspectRatio}
               onUpdateLogos={handleUpdateLogos}
               onCommitLogos={handleCommitLogos}
+              onLogosChange={handleLogosChange}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">

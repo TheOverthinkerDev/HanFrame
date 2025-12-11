@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Photo, CropData, AspectRatio, LogoLayer } from '../types';
 import { applyImageFilters } from '../utils/processor';
-import { Loader2 } from 'lucide-react';
+import { Loader2, BringToFront, SendToBack, Trash2 } from 'lucide-react';
 
 interface CanvasViewProps {
   photo: Photo;
@@ -10,6 +10,7 @@ interface CanvasViewProps {
   aspectRatio: AspectRatio;
   onUpdateLogos: (logos: LogoLayer[]) => void;
   onCommitLogos: () => void;
+  onLogosChange: (logos: LogoLayer[]) => void;
 }
 
 type DragMode = 'none' | 'move_crop' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move_logo' | 'scale_logo' | 'rotate_logo';
@@ -24,29 +25,14 @@ const getRatioValue = (ar: AspectRatio): number | null => {
   }
 };
 
-const formatBytes = (bytes?: number, decimals = 1) => {
-    if (!bytes) return '0 B';
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-};
-
-const calculateRatio = (w: number, h: number) => {
-    const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
-    const divisor = gcd(w, h);
-    return `${w / divisor}:${h / divisor}`;
-};
-
 export const CanvasView: React.FC<CanvasViewProps> = ({ 
     photo, 
     isCropMode, 
     onUpdateCrop, 
     aspectRatio,
     onUpdateLogos,
-    onCommitLogos
+    onCommitLogos,
+    onLogosChange
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -73,6 +59,13 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       logoRotation: 0,
       centerX: 0, centerY: 0 // Center of the logo in screen space at start of drag
   });
+  
+  // Computed active logo rotation for display
+  const activeLogo = photo.logos.find(l => l.id === activeLogoId);
+  const currentRotationDeg = activeLogo ? Math.round((activeLogo.rotation * 180 / Math.PI) % 360) : 0;
+  // Normalize to 0-360 range for display
+  const displayRotation = currentRotationDeg < 0 ? currentRotationDeg + 360 : currentRotationDeg;
+
 
   // 0. Handle Rotation
   useEffect(() => {
@@ -281,17 +274,29 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
                 ctx.lineWidth = 1.5;
                 ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
                 
-                // Scale Handles (Corners)
+                // Scale Handles (4 Corners)
                 ctx.fillStyle = '#3b82f6';
+                ctx.strokeStyle = '#ffffff';
                 const handleSize = 6;
-                // Bottom Right
-                ctx.beginPath();
-                ctx.arc(renderW / 2, renderH / 2, handleSize, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
+                const halfW = renderW / 2;
+                const halfH = renderH / 2;
+                
+                const corners = [
+                    { x: -halfW, y: -halfH }, // TL
+                    { x: halfW, y: -halfH },  // TR
+                    { x: -halfW, y: halfH },  // BL
+                    { x: halfW, y: halfH },   // BR
+                ];
+
+                corners.forEach(corner => {
+                    ctx.beginPath();
+                    ctx.arc(corner.x, corner.y, handleSize, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                });
 
                 // Rotate Handle (Top Center, extended)
-                const handleDist = 20;
+                const handleDist = 25;
                 ctx.beginPath();
                 ctx.moveTo(0, -renderH / 2);
                 ctx.lineTo(0, -renderH / 2 - handleDist);
@@ -363,13 +368,24 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
 
           // Check handles first (only if active)
           if (activeLogoId === logo.id) {
-             // Rotate Handle: (0, -H/2 - 20)
-             if (isNear(lx, ly, 0, -renderH/2 - 20, 15)) {
+             // Rotate Handle: (0, -H/2 - 25)
+             if (isNear(lx, ly, 0, -renderH/2 - 25, 15)) {
                  return { logo, type: 'rotate' };
              }
-             // Resize Handle: (W/2, H/2) - Bottom Right Corner
-             if (isNear(lx, ly, renderW/2, renderH/2, 15)) {
-                 return { logo, type: 'resize' };
+             // Resize Handles: Check all 4 corners
+             const halfW = renderW / 2;
+             const halfH = renderH / 2;
+             const corners = [
+                 { x: -halfW, y: -halfH },
+                 { x: halfW, y: -halfH },
+                 { x: -halfW, y: halfH },
+                 { x: halfW, y: halfH },
+             ];
+             
+             for (const corner of corners) {
+                 if (isNear(lx, ly, corner.x, corner.y, 15)) {
+                     return { logo, type: 'resize' };
+                 }
              }
           }
 
@@ -459,19 +475,13 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
                 
                 // ROTATE
                 if (dragMode === 'rotate_logo') {
-                    // Vector from center to mouse
                     const rect = canvasRef.current?.getBoundingClientRect();
                     if (!rect) return l;
                     const mx = e.clientX - rect.left;
                     const my = e.clientY - rect.top;
                     
-                    // Angle relative to center
-                    // We need the angle of the vector from center to mouse.
-                    // The handle is at -90deg (up). 
-                    // To make mouse track perfectly, we calculate the angle offset.
                     const angle = Math.atan2(my - dragStart.centerY, mx - dragStart.centerX);
                     
-                    // Align handle (-PI/2) to angle
                     return {
                         ...l,
                         rotation: angle + Math.PI / 2
@@ -480,7 +490,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
 
                 // SCALE
                 if (dragMode === 'scale_logo') {
-                     // Distance based scaling relative to center
                      const rect = canvasRef.current?.getBoundingClientRect();
                      if (!rect) return l;
                      const mx = e.clientX - rect.left;
@@ -489,8 +498,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
                      // Current distance from center
                      const currentDist = Math.sqrt(Math.pow(mx - dragStart.centerX, 2) + Math.pow(my - dragStart.centerY, 2));
                      
-                     // Calculate initial distance of the handle (approx)
-                     // Reconstruct dims
                      const minDim = Math.min(layout.width, layout.height);
                      const logoImg = logoImagesRef.current.get(l.url);
                      const aspect = logoImg ? logoImg.width / logoImg.height : 1;
@@ -499,8 +506,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
                      const initialW = initialH * aspect;
                      const initialHandleDist = Math.sqrt(Math.pow(initialW/2, 2) + Math.pow(initialH/2, 2));
 
-                     // New scale is proportional to distance ratio
-                     // Avoid division by zero
                      if (initialHandleDist === 0) return l;
                      
                      const scaleFactor = currentDist / initialHandleDist;
@@ -525,6 +530,38 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
         onCommitLogos();
     }
+  };
+
+  // --- Layer Management Handlers ---
+
+  const handleBringToFront = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!activeLogoId) return;
+    const currentLogos = [...photo.logos];
+    const index = currentLogos.findIndex(l => l.id === activeLogoId);
+    if (index === -1 || index === currentLogos.length - 1) return;
+    const [item] = currentLogos.splice(index, 1);
+    currentLogos.push(item);
+    onLogosChange(currentLogos);
+  };
+
+  const handleSendToBack = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!activeLogoId) return;
+    const currentLogos = [...photo.logos];
+    const index = currentLogos.findIndex(l => l.id === activeLogoId);
+    if (index === -1 || index === 0) return;
+    const [item] = currentLogos.splice(index, 1);
+    currentLogos.unshift(item);
+    onLogosChange(currentLogos);
+  };
+
+  const handleDeleteActiveLogo = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!activeLogoId) return;
+      const currentLogos = photo.logos.filter(l => l.id !== activeLogoId);
+      onLogosChange(currentLogos);
+      setActiveLogoId(null);
   };
 
   // --- Crop Overlay Handlers ---
@@ -615,16 +652,45 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   return (
     <div ref={containerRef} className="flex-1 h-full relative flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 overflow-hidden select-none touch-none transition-colors duration-300">
       
-      {/* PHOTO INFO OVERLAY */}
-      <div className="absolute top-4 left-4 z-20 bg-black/60 backdrop-blur-md text-white px-3 py-2 rounded-lg text-xs font-mono border border-white/10 shadow-lg pointer-events-none flex flex-col gap-0.5">
-         <span className="font-bold text-zinc-200">{photo.name}</span>
-         <span className="text-zinc-400">
-             {photo.width} x {photo.height} px
-         </span>
-         <span className="text-zinc-400">
-             AR: {calculateRatio(photo.width, photo.height)} • Size: {formatBytes(photo.sizeInBytes)}
-         </span>
-      </div>
+      {/* Rotation Popup */}
+      {dragMode === 'rotate_logo' && activeLogoId && (
+        <div className="absolute z-30 bg-black/80 text-white px-2 py-1 rounded text-xs pointer-events-none transform -translate-x-1/2 -translate-y-full" 
+             style={{ 
+                 left: dragStart.centerX + layout.left, 
+                 top: dragStart.centerY + layout.top - 50 
+             }}>
+             {displayRotation}°
+        </div>
+      )}
+
+      {/* Layer Management Toolbar */}
+      {activeLogoId && !isCropMode && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl rounded-full px-4 py-2 flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-200">
+             <button 
+                onClick={handleSendToBack}
+                title="Send Backward"
+                className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors"
+             >
+                <SendToBack size={18} />
+             </button>
+             <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+             <button 
+                onClick={handleBringToFront}
+                title="Bring Forward"
+                className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors"
+             >
+                <BringToFront size={18} />
+             </button>
+             <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
+             <button 
+                onClick={handleDeleteActiveLogo}
+                title="Delete Logo"
+                className="p-2 rounded-full hover:bg-red-50 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400 transition-colors"
+             >
+                <Trash2 size={18} />
+             </button>
+          </div>
+      )}
 
       <div style={{ width: layout.width, height: layout.height, position: 'relative' }}>
         <canvas 

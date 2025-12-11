@@ -141,12 +141,9 @@ export const applyImageFilters = (
   const len = data.length;
 
   // 1. Smart Exposure Calculation
-  // We use a base-2 power for exposure, but scaled more gently (divide by 80 instead of 50)
   const exposureMultiplier = Math.pow(2, adj.exposure / 80);
   
   // Highlight Rolloff Constants
-  // We start compressing highlights at 'threshold' (e.g., 200 out of 255)
-  // This prevents harsh clipping when exposure is increased.
   const rollOffThreshold = 210;
   const maxVal = 255;
   const rollOffRange = maxVal - rollOffThreshold;
@@ -174,8 +171,7 @@ export const applyImageFilters = (
     g *= exposureMultiplier;
     b *= exposureMultiplier;
 
-    // Apply Soft Knee Rolloff for highlights if exposure boosted values too high
-    // Use hyperbolic tangent for smooth asymptote to 255
+    // Apply Soft Knee Rolloff for highlights
     if (r > rollOffThreshold) {
         r = rollOffThreshold + rollOffRange * Math.tanh((r - rollOffThreshold) / rollOffRange);
     }
@@ -261,4 +257,58 @@ export const calculateAutoAdjustments = (ctx: CanvasRenderingContext2D, width: n
      contrast: newContrast,
      vibrance: 10, // Always looks a bit nice
    };
+};
+
+export const formatBytes = (bytes?: number, decimals = 1) => {
+    if (!bytes) return '0 B';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+export const calculateReadableRatio = (w: number, h: number): string => {
+  if (!w || !h) return '';
+  
+  const ratio = w / h;
+  const tolerance = 0.05;
+
+  // Dictionary of common aspect ratios
+  const common = [
+    { n: 1, d: 1, s: "1:1" },
+    { n: 4, d: 3, s: "4:3" },
+    { n: 3, d: 4, s: "3:4" },
+    { n: 3, d: 2, s: "3:2" },
+    { n: 2, d: 3, s: "2:3" },
+    { n: 16, d: 9, s: "16:9" },
+    { n: 9, d: 16, s: "9:16" },
+    { n: 5, d: 4, s: "5:4" },
+    { n: 4, d: 5, s: "4:5" },
+    { n: 2, d: 1, s: "2:1" },
+    { n: 1, d: 2, s: "1:2" },
+    { n: 21, d: 9, s: "21:9" },
+  ];
+
+  for (const c of common) {
+    if (Math.abs(ratio - c.n / c.d) < tolerance) {
+      return c.s;
+    }
+  }
+
+  // If not common, simplify fraction or use decimal
+  // GCD based simplification
+  const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
+  const divisor = gcd(Math.round(w), Math.round(h));
+  const sw = Math.round(w) / divisor;
+  const sh = Math.round(h) / divisor;
+
+  // If simplified integers are reasonably small (readable)
+  if (sw <= 20 && sh <= 20) {
+      return `${sw}:${sh}`;
+  }
+  
+  // Fallback to decimal ratio for things like 1.91:1
+  return ratio >= 1 ? `${ratio.toFixed(2)}:1` : `1:${(1/ratio).toFixed(2)}`;
 };

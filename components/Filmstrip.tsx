@@ -1,7 +1,7 @@
 import React from 'react';
 import { Photo } from '../types';
 import { Plus, X } from 'lucide-react';
-import { getThumbnailStyles } from '../utils/processor';
+import { ThumbnailCanvas } from './ThumbnailCanvas';
 
 interface FilmstripProps {
   photos: Photo[];
@@ -37,17 +37,12 @@ export const Filmstrip: React.FC<FilmstripProps> = ({ photos, selectedId, onSele
             onClick={() => onSelect(photo.id)}
             className={`relative group shrink-0 w-24 h-24 bg-zinc-100 dark:bg-zinc-900 rounded-md overflow-hidden cursor-pointer border-2 transition-all ${selectedId === photo.id ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-transparent hover:border-zinc-300 dark:hover:border-zinc-600'}`}
           >
-            {/* We apply CSS filters here for fast preview */}
-            <img 
-              src={photo.thumbnailUrl} 
-              alt={photo.name} 
-              className="w-full h-full object-cover transition-all duration-200"
-              style={getThumbnailStyles(photo.adjustments)}
-            />
+            {/* Use ThumbnailCanvas instead of img for composite preview */}
+            <ThumbnailCanvas photo={photo} />
             
             {/* Cropped Indicator (Small icon) */}
             {photo.crop && (
-               <div className="absolute top-1 left-1 bg-black/50 p-0.5 rounded">
+               <div className="absolute top-1 left-1 bg-black/50 p-0.5 rounded pointer-events-none">
                    <div className="w-2 h-2 border border-white/80" />
                </div>
             )}
