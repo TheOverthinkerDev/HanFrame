@@ -14,6 +14,15 @@ export interface CropData {
   height: number;
 }
 
+export interface LogoLayer {
+  id: string;
+  url: string;
+  x: number; // 0-1 (Relative to image width)
+  y: number; // 0-1 (Relative to image height)
+  scale: number; // 0-1 (Relative to image min dimension)
+  rotation: number; // radians
+}
+
 export interface Photo {
   id: string;
   name: string;
@@ -21,10 +30,12 @@ export interface Photo {
   thumbnailUrl: string; // Smaller version for UI
   width: number;
   height: number;
+  sizeInBytes?: number; // File size
   rotation: number; // 0, 90, 180, 270
   adjustments: Adjustments;
   crop: CropData | null;
   frameOverlay: string | null; // URL of the PNG frame
+  logos: LogoLayer[];
 }
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = {

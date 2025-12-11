@@ -6,7 +6,7 @@ import { Filmstrip } from './components/Filmstrip';
 import { CanvasView } from './components/CanvasView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ProcessingModal } from './components/ProcessingModal';
-import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData } from './types';
+import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData, LogoLayer } from './types';
 import { createThumbnail, isHeic, convertHeicToJpeg } from './utils/processor';
 import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud, Moon, Sun } from 'lucide-react';
 import { useHistory } from './hooks/useHistory';
@@ -29,8 +29,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
-  // Frame Assets State (Session based)
+  // Assets State (Session based)
   const [uploadedFrames, setUploadedFrames] = useState<string[]>([]);
+  const [uploadedLogos, setUploadedLogos] = useState<string[]>([]);
 
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -121,9 +122,11 @@ export default function App() {
           thumbnailUrl: thumb.url,
           width: thumb.width,
           height: thumb.height,
+          sizeInBytes: file.size, // Capture file size
           rotation: 0,
           adjustments: { ...DEFAULT_ADJUSTMENTS },
           frameOverlay: null,
+          logos: [],
           crop: null
         });
       } catch (err) {
@@ -209,9 +212,6 @@ export default function App() {
 
   const handleDeleteFrame = (urlToDelete: string) => {
       setUploadedFrames(prev => prev.filter(url => url !== urlToDelete));
-      // If any photo used this frame, optional: remove it. 
-      // For now, let's keep it on the photo until changed, or we can revoke.
-      // Better to revoke URL if we want to clean up memory, but simple filter is safer for UI state.
   };
 
   const handleSelectFrame = (url: string | null) => {
@@ -225,6 +225,79 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
+  const handleBatchFrame = async () => {
+    if (!selectedPhoto) return;
+    const frame = selectedPhoto.frameOverlay;
+    if (!frame) return;
+
+    await runBatchOperation('Applying Frame...', (p) => ({
+      ...p,
+      frameOverlay: frame
+    }));
+    addToast('success', `Frame applied to ${photos.length} photos`);
+  };
+  
+  // --- Logo Handlers ---
+  const handleUploadLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files || e.target.files.length === 0) return;
+      const file = e.target.files[0];
+      const url = URL.createObjectURL(file);
+      setUploadedLogos(prev => [url, ...prev]);
+      addToast('success', 'Logo added to library');
+      e.target.value = '';
+  };
+
+  const handleDeleteLogoAsset = (urlToDelete: string) => {
+      setUploadedLogos(prev => prev.filter(url => url !== urlToDelete));
+  };
+
+  const handleAddLogoToPhoto = (url: string) => {
+      if (!selectedId) return;
+      const newLogo: LogoLayer = {
+          id: uuidv4(),
+          url,
+          x: 0.5, // Center
+          y: 0.5,
+          scale: 0.2, // Start at 20% size relative to min dim
+          rotation: 0
+      };
+      
+      const newPhotos = photos.map(p => {
+          if (p.id === selectedId) {
+              return { ...p, logos: [...p.logos, newLogo] };
+          }
+          return p;
+      });
+      pushHistory(newPhotos);
+  };
+
+  const handleUpdateLogos = (logos: LogoLayer[]) => {
+      if (!selectedId) return;
+      // Used for real-time dragging (no history push yet)
+      setPhotos(photos.map(p => {
+          if (p.id === selectedId) {
+              return { ...p, logos };
+          }
+          return p;
+      }));
+  };
+
+  const handleCommitLogos = () => {
+      // Push current state to history after drag ends
+      pushHistory(photos);
+  };
+
+  const handleBatchLogo = async () => {
+    if (!selectedPhoto) return;
+    const logos = selectedPhoto.logos;
+    if (logos.length === 0) return;
+
+    await runBatchOperation('Syncing Logos...', (p) => ({
+      ...p,
+      logos: [...logos] // Shallow copy array, objects are immutable enough for this context
+    }));
+    addToast('success', `Logos synced to ${photos.length} photos`);
+  };
 
   // Called while dragging slider (No History Push)
   const handleAdjustmentChange = (key: keyof Adjustments, value: number) => {
@@ -272,6 +345,7 @@ export default function App() {
           ...p, 
           adjustments: { ...DEFAULT_ADJUSTMENTS }, 
           frameOverlay: null,
+          logos: [],
           crop: null, 
           rotation: 0 
       } : p
@@ -319,11 +393,14 @@ export default function App() {
     if (!selectedPhoto) return;
     const settings = { ...selectedPhoto.adjustments };
     const frame = selectedPhoto.frameOverlay;
+    // Copy logos too? Maybe tricky if dimensions differ, but let's do it for consistency
+    const logos = [...selectedPhoto.logos];
     
     await runBatchOperation('Syncing Settings...', (p) => ({
         ...p,
         adjustments: { ...settings },
-        frameOverlay: frame
+        frameOverlay: frame,
+        logos: [...logos] // Deep copy needed if logos were objects, but structure is simple enough
     }));
     addToast('success', `Synced settings to ${photos.length} photos`);
   };
@@ -461,12 +538,11 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-           {selectedPhoto && (
-             <span className="text-xs text-zinc-500 font-mono hidden md:block">
-               {selectedPhoto.width}x{selectedPhoto.height} • {selectedPhoto.name}
-             </span>
-           )}
-
+           {/* Info updated in CanvasView but kept simple here or removed if redundant. 
+               Let's keep name/size here as a backup or summary. 
+               The user asked for info in the 'top left corner of the edit screen'. 
+               I will add an overlay in CanvasView and keep this clean. 
+           */}
             <button
                 onClick={toggleTheme}
                 className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors"
@@ -488,13 +564,20 @@ export default function App() {
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         
-        {/* Left Sidebar (Frames) */}
+        {/* Left Sidebar (Frames & Logos) */}
         <LeftSidebar 
             uploadedFrames={uploadedFrames}
             activeFrame={selectedPhoto?.frameOverlay || null}
             onUploadFrame={handleUploadFrame}
             onSelectFrame={handleSelectFrame}
             onDeleteFrame={handleDeleteFrame}
+            onBatchFrame={handleBatchFrame}
+            uploadedLogos={uploadedLogos}
+            hasLogos={(selectedPhoto?.logos.length || 0) > 0}
+            onUploadLogo={handleUploadLogo}
+            onAddLogoToPhoto={handleAddLogoToPhoto}
+            onDeleteLogoAsset={handleDeleteLogoAsset}
+            onBatchLogo={handleBatchLogo}
         />
 
         {/* Center Canvas Area */}
@@ -505,6 +588,8 @@ export default function App() {
               isCropMode={isCropMode}
               onUpdateCrop={handleCropCommit} 
               aspectRatio={aspectRatio}
+              onUpdateLogos={handleUpdateLogos}
+              onCommitLogos={handleCommitLogos}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">

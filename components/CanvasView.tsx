@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Photo, CropData, AspectRatio } from '../types';
+import { Photo, CropData, AspectRatio, LogoLayer } from '../types';
 import { applyImageFilters } from '../utils/processor';
 import { Loader2 } from 'lucide-react';
 
@@ -8,9 +8,11 @@ interface CanvasViewProps {
   isCropMode: boolean;
   onUpdateCrop: (crop: CropData | null) => void;
   aspectRatio: AspectRatio;
+  onUpdateLogos: (logos: LogoLayer[]) => void;
+  onCommitLogos: () => void;
 }
 
-type DragMode = 'none' | 'move' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w';
+type DragMode = 'none' | 'move_crop' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move_logo' | 'scale_logo' | 'rotate_logo';
 
 const getRatioValue = (ar: AspectRatio): number | null => {
   switch (ar) {
@@ -22,30 +24,58 @@ const getRatioValue = (ar: AspectRatio): number | null => {
   }
 };
 
-export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpdateCrop, aspectRatio }) => {
+const formatBytes = (bytes?: number, decimals = 1) => {
+    if (!bytes) return '0 B';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+const calculateRatio = (w: number, h: number) => {
+    const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
+    const divisor = gcd(w, h);
+    return `${w / divisor}:${h / divisor}`;
+};
+
+export const CanvasView: React.FC<CanvasViewProps> = ({ 
+    photo, 
+    isCropMode, 
+    onUpdateCrop, 
+    aspectRatio,
+    onUpdateLogos,
+    onCommitLogos
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
-  const frameImgRef = useRef<HTMLImageElement | null>(null); // Ref for frame image
+  const frameImgRef = useRef<HTMLImageElement | null>(null);
+  const logoImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
-  // We maintain a "Display URL" which is the physically rotated version of the image.
-  // This allows the Crop tool and Canvas logic to remain simple (they just see a WxH image).
-  // This is generated on the fly when rotation changes.
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [isGeneratingView, setIsGeneratingView] = useState(false);
-  const [frameLoaded, setFrameLoaded] = useState(false); // Track if frame PNG is ready
+  const [frameLoaded, setFrameLoaded] = useState(false);
 
-  // Layout state (Display dimensions)
   const [layout, setLayout] = useState({ width: 0, height: 0, top: 0, left: 0, scale: 1 });
   
-  // Crop Interaction State
   const [localCrop, setLocalCrop] = useState<CropData | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>('none');
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0, cropX: 0, cropY: 0, cropW: 0, cropH: 0 });
+  const [activeLogoId, setActiveLogoId] = useState<string | null>(null);
+  
+  // Drag State including logo specific properties
+  const [dragStart, setDragStart] = useState({ 
+      x: 0, y: 0, 
+      cropX: 0, cropY: 0, cropW: 0, cropH: 0,
+      logoX: 0, logoY: 0,
+      logoScale: 0,
+      logoRotation: 0,
+      centerX: 0, centerY: 0 // Center of the logo in screen space at start of drag
+  });
 
-  // 0. Handle Rotation: Generate a rotated view blob when rotation changes
+  // 0. Handle Rotation
   useEffect(() => {
-    // If no rotation, use original
     if (!photo.rotation || photo.rotation === 0) {
         setDisplayUrl(photo.originalUrl);
         return;
@@ -57,8 +87,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
     img.onload = () => {
         const angle = photo.rotation;
         const canvas = document.createElement('canvas');
-        
-        // Determine new dimensions
         if (angle % 180 !== 0) {
             canvas.width = img.height;
             canvas.height = img.width;
@@ -66,13 +94,11 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
             canvas.width = img.width;
             canvas.height = img.height;
         }
-        
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.translate(canvas.width / 2, canvas.height / 2);
             ctx.rotate((angle * Math.PI) / 180);
             ctx.drawImage(img, -img.width / 2, -img.height / 2);
-            
             canvas.toBlob((blob) => {
                 if (blob) {
                    const newUrl = URL.createObjectURL(blob);
@@ -82,33 +108,52 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
                    });
                 }
                 setIsGeneratingView(false);
-            }, 'image/jpeg', 0.85); // Reasonable quality for editor view
+            }, 'image/jpeg', 0.85);
         }
     };
   }, [photo.originalUrl, photo.rotation]);
 
-  // Load Frame Image whenever frameOverlay changes
+  // Load Frame Image
   useEffect(() => {
       if (!photo.frameOverlay) {
           frameImgRef.current = null;
           setFrameLoaded(false);
           return;
       }
-      
       const img = new Image();
       img.onload = () => {
           frameImgRef.current = img;
-          setFrameLoaded(true); // Trigger re-render
+          setFrameLoaded(true);
       };
       img.src = photo.frameOverlay;
   }, [photo.frameOverlay]);
 
+  // Load Logo Images
+  useEffect(() => {
+      const currentUrls = new Set(photo.logos.map(l => l.url));
+      for (const [url] of logoImagesRef.current) {
+          if (!currentUrls.has(url)) {
+              logoImagesRef.current.delete(url);
+          }
+      }
+
+      photo.logos.forEach(logo => {
+          if (!logoImagesRef.current.has(logo.url)) {
+              const img = new Image();
+              img.onload = () => {
+                  logoImagesRef.current.set(logo.url, img);
+                  renderCanvas(); 
+              };
+              img.src = logo.url;
+              logoImagesRef.current.set(logo.url, img);
+          }
+      });
+  }, [photo.logos]);
+
 
   // 1. Initialize Local Crop state
-  // We use displayUrl here to ensure we have the correct dimensions loaded in imgRef
   useEffect(() => {
     if (isCropMode && imgRef.current) {
-      // If we already have a crop, use it. Otherwise init full image.
       const initialCrop = photo.crop || { x: 0, y: 0, width: imgRef.current.width, height: imgRef.current.height };
       setLocalCrop(initialCrop);
     } else {
@@ -116,31 +161,22 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
     }
   }, [isCropMode, photo.id, photo.crop, displayUrl]); 
 
-  // 2. Handle Aspect Ratio Changes (Constant Area Strategy)
+  // 2. Handle Aspect Ratio Changes
   useEffect(() => {
     if (!isCropMode || !localCrop || aspectRatio === 'Free' || !imgRef.current) return;
-
     const ratio = getRatioValue(aspectRatio);
     if (!ratio) return;
 
     const imgW = imgRef.current.width;
     const imgH = imgRef.current.height;
-    
     const cx = localCrop.x + localCrop.width / 2;
     const cy = localCrop.y + localCrop.height / 2;
-
     const currentArea = localCrop.width * localCrop.height;
     let targetW = Math.sqrt(currentArea * ratio);
     let targetH = targetW / ratio;
 
-    if (targetW > imgW) {
-        targetW = imgW;
-        targetH = targetW / ratio;
-    }
-    if (targetH > imgH) {
-        targetH = imgH;
-        targetW = targetH * ratio;
-    }
+    if (targetW > imgW) { targetW = imgW; targetH = targetW / ratio; }
+    if (targetH > imgH) { targetH = imgH; targetW = targetH * ratio; }
 
     let newX = cx - targetW / 2;
     let newY = cy - targetH / 2;
@@ -166,7 +202,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
     const contW = container.clientWidth;
     const contH = container.clientHeight;
     
-    // Determine source rect based on mode
     let srcW, srcH, srcX, srcY;
 
     if (isCropMode) {
@@ -180,7 +215,6 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
       srcH = c.height;
     }
 
-    // Calculate layout scale to fit container
     const padding = 20;
     const availW = contW - padding * 2;
     const availH = contH - padding * 2;
@@ -202,31 +236,85 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
         return newLayout;
     });
 
-    // Draw to Canvas
     canvas.width = drawW;
     canvas.height = drawH;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
+    // Draw Image
     ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, drawW, drawH);
     
     // Apply filters
     applyImageFilters(ctx, drawW, drawH, photo.adjustments);
     
-    // Apply PNG Frame Overlay (if exists and loaded)
+    // Apply Frame
     if (frameImgRef.current) {
-        // Stretch frame to fit the destination rect
         ctx.drawImage(frameImgRef.current, 0, 0, drawW, drawH);
     }
-    
-  }, [photo.adjustments, photo.crop, isCropMode, frameLoaded]); // Re-render when frameLoaded changes
 
-  // Trigger render when key dependencies change
+    // Apply Logos
+    photo.logos.forEach(logo => {
+        const logoImg = logoImagesRef.current.get(logo.url);
+        if (logoImg && logoImg.complete) {
+            const minDim = Math.min(drawW, drawH);
+            const w = logoImg.width;
+            const h = logoImg.height;
+            const aspect = w / h;
+            
+            let renderH = minDim * logo.scale;
+            let renderW = renderH * aspect;
+
+            const cx = logo.x * drawW;
+            const cy = logo.y * drawH;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(logo.rotation);
+
+            // Draw Image Centered
+            ctx.drawImage(logoImg, -renderW / 2, -renderH / 2, renderW, renderH);
+
+            // Highlight active logo with Bounding Box and Handles
+            if (activeLogoId === logo.id) {
+                // Bounding Box
+                ctx.strokeStyle = '#3b82f6'; // Blue
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(-renderW / 2, -renderH / 2, renderW, renderH);
+                
+                // Scale Handles (Corners)
+                ctx.fillStyle = '#3b82f6';
+                const handleSize = 6;
+                // Bottom Right
+                ctx.beginPath();
+                ctx.arc(renderW / 2, renderH / 2, handleSize, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Rotate Handle (Top Center, extended)
+                const handleDist = 20;
+                ctx.beginPath();
+                ctx.moveTo(0, -renderH / 2);
+                ctx.lineTo(0, -renderH / 2 - handleDist);
+                ctx.strokeStyle = '#3b82f6';
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(0, -renderH / 2 - handleDist, handleSize, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+        }
+    });
+    
+  }, [photo.adjustments, photo.crop, photo.logos, isCropMode, frameLoaded, activeLogoId]);
+
   useEffect(() => {
     renderCanvas();
   }, [renderCanvas]);
 
-  // Load Image initially (whenever displayUrl changes due to rotation or selection)
   useEffect(() => {
     if (!displayUrl) return;
     const img = new Image();
@@ -237,53 +325,243 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
     };
   }, [displayUrl, renderCanvas]);
 
-  // Handle Resize of window
   useEffect(() => {
     window.addEventListener('resize', renderCanvas);
     return () => window.removeEventListener('resize', renderCanvas);
   }, [renderCanvas]);
 
+  // --- Interaction Utils ---
+
+  // Helper to check if a point is close to a target
+  const isNear = (x: number, y: number, tx: number, ty: number, dist: number = 10) => {
+      return Math.sqrt(Math.pow(x - tx, 2) + Math.pow(y - ty, 2)) < dist;
+  }
+
+  const getLogoInteraction = (x: number, y: number): { logo: LogoLayer, type: 'body' | 'resize' | 'rotate' } | null => {
+      // Loop reverse to hit top-most first
+      for (let i = photo.logos.length - 1; i >= 0; i--) {
+          const logo = photo.logos[i];
+          const logoImg = logoImagesRef.current.get(logo.url);
+          if (!logoImg) continue;
+
+          const drawW = layout.width;
+          const drawH = layout.height;
+          const minDim = Math.min(drawW, drawH);
+          const aspect = logoImg.width / logoImg.height;
+          const renderH = minDim * logo.scale;
+          const renderW = renderH * aspect;
+
+          const cx = logo.x * drawW;
+          const cy = logo.y * drawH;
+
+          // Transform mouse point to local unrotated space
+          const dx = x - cx;
+          const dy = y - cy;
+          // Inverse rotate
+          const lx = dx * Math.cos(-logo.rotation) - dy * Math.sin(-logo.rotation);
+          const ly = dx * Math.sin(-logo.rotation) + dy * Math.cos(-logo.rotation);
+
+          // Check handles first (only if active)
+          if (activeLogoId === logo.id) {
+             // Rotate Handle: (0, -H/2 - 20)
+             if (isNear(lx, ly, 0, -renderH/2 - 20, 15)) {
+                 return { logo, type: 'rotate' };
+             }
+             // Resize Handle: (W/2, H/2) - Bottom Right Corner
+             if (isNear(lx, ly, renderW/2, renderH/2, 15)) {
+                 return { logo, type: 'resize' };
+             }
+          }
+
+          // Check Body: [-W/2, W/2] x [-H/2, H/2]
+          if (lx >= -renderW/2 && lx <= renderW/2 && ly >= -renderH/2 && ly <= renderH/2) {
+              return { logo, type: 'body' };
+          }
+      }
+      return null;
+  };
+
 
   // --- Interaction Handlers ---
 
-  const handlePointerDown = (e: React.PointerEvent, mode: DragMode) => {
-    if (!localCrop || !layout.scale) return;
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!layout.scale) return;
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
-    setDragMode(mode);
-    setDragStart({
-      x: e.clientX,
-      y: e.clientY,
-      cropX: localCrop.x,
-      cropY: localCrop.y,
-      cropW: localCrop.width,
-      cropH: localCrop.height
-    });
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Check Crop Mode Interaction (Simplified hit detection for mode switching)
+    if (isCropMode && localCrop) {
+         // Pass to crop handlers handled by overlay... 
+         return; 
+    }
+
+    // Check Logo Interaction
+    if (!isCropMode) {
+        const hit = getLogoInteraction(mouseX, mouseY);
+        
+        if (hit) {
+            setActiveLogoId(hit.logo.id);
+            const mode = hit.type === 'rotate' ? 'rotate_logo' : hit.type === 'resize' ? 'scale_logo' : 'move_logo';
+            setDragMode(mode);
+            
+            // Screen coords for center used in rotation
+            const drawW = layout.width;
+            const drawH = layout.height;
+            const cx = hit.logo.x * drawW;
+            const cy = hit.logo.y * drawH;
+
+            setDragStart({
+                ...dragStart,
+                x: e.clientX,
+                y: e.clientY,
+                logoX: hit.logo.x,
+                logoY: hit.logo.y,
+                logoScale: hit.logo.scale,
+                logoRotation: hit.logo.rotation,
+                centerX: cx,
+                centerY: cy
+            });
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            return;
+        } else {
+            // Deselect if clicked empty space
+            setActiveLogoId(null);
+        }
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (dragMode === 'none' || !localCrop || !imgRef.current) return;
+    if (dragMode === 'none') return;
     e.preventDefault();
 
-    const dx = (e.clientX - dragStart.x) / layout.scale;
-    const dy = (e.clientY - dragStart.y) / layout.scale;
+    if ((dragMode === 'move_logo' || dragMode === 'scale_logo' || dragMode === 'rotate_logo') && activeLogoId) {
+        const dx = (e.clientX - dragStart.x);
+        const dy = (e.clientY - dragStart.y);
 
-    let { cropX: x, cropY: y, cropW: w, cropH: h } = dragStart;
-    const imgW = imgRef.current.width;
-    const imgH = imgRef.current.height;
-    const ratio = getRatioValue(aspectRatio);
+        const updatedLogos = photo.logos.map(l => {
+            if (l.id === activeLogoId) {
+                // MOVE
+                if (dragMode === 'move_logo') {
+                    const deltaX = dx / layout.width;
+                    const deltaY = dy / layout.height;
+                    return {
+                        ...l,
+                        x: dragStart.logoX + deltaX,
+                        y: dragStart.logoY + deltaY
+                    };
+                }
+                
+                // ROTATE
+                if (dragMode === 'rotate_logo') {
+                    // Vector from center to mouse
+                    const rect = canvasRef.current?.getBoundingClientRect();
+                    if (!rect) return l;
+                    const mx = e.clientX - rect.left;
+                    const my = e.clientY - rect.top;
+                    
+                    // Angle relative to center
+                    // We need the angle of the vector from center to mouse.
+                    // The handle is at -90deg (up). 
+                    // To make mouse track perfectly, we calculate the angle offset.
+                    const angle = Math.atan2(my - dragStart.centerY, mx - dragStart.centerX);
+                    
+                    // Align handle (-PI/2) to angle
+                    return {
+                        ...l,
+                        rotation: angle + Math.PI / 2
+                    };
+                }
 
-    if (dragMode === 'move') {
-      x += dx;
-      y += dy;
-      // Simple Clamp
-      x = Math.max(0, Math.min(x, imgW - w));
-      y = Math.max(0, Math.min(y, imgH - h));
-    } else {
-        // --- Robust Resizing Logic ---
+                // SCALE
+                if (dragMode === 'scale_logo') {
+                     // Distance based scaling relative to center
+                     const rect = canvasRef.current?.getBoundingClientRect();
+                     if (!rect) return l;
+                     const mx = e.clientX - rect.left;
+                     const my = e.clientY - rect.top;
+                     
+                     // Current distance from center
+                     const currentDist = Math.sqrt(Math.pow(mx - dragStart.centerX, 2) + Math.pow(my - dragStart.centerY, 2));
+                     
+                     // Calculate initial distance of the handle (approx)
+                     // Reconstruct dims
+                     const minDim = Math.min(layout.width, layout.height);
+                     const logoImg = logoImagesRef.current.get(l.url);
+                     const aspect = logoImg ? logoImg.width / logoImg.height : 1;
+                     
+                     const initialH = minDim * dragStart.logoScale;
+                     const initialW = initialH * aspect;
+                     const initialHandleDist = Math.sqrt(Math.pow(initialW/2, 2) + Math.pow(initialH/2, 2));
+
+                     // New scale is proportional to distance ratio
+                     // Avoid division by zero
+                     if (initialHandleDist === 0) return l;
+                     
+                     const scaleFactor = currentDist / initialHandleDist;
+                     const newScale = dragStart.logoScale * scaleFactor;
+
+                     return {
+                         ...l,
+                         scale: Math.max(0.02, newScale) // Min size limit
+                     };
+                }
+            }
+            return l;
+        });
         
+        onUpdateLogos(updatedLogos);
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (dragMode.includes('_logo')) {
+        setDragMode('none');
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+        onCommitLogos();
+    }
+  };
+
+  // --- Crop Overlay Handlers ---
+  const handleCropPointerDown = (e: React.PointerEvent, mode: DragMode) => {
+      if (!localCrop || !layout.scale) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      setDragMode(mode);
+      setDragStart({
+          ...dragStart,
+          x: e.clientX,
+          y: e.clientY,
+          cropX: localCrop.x,
+          cropY: localCrop.y,
+          cropW: localCrop.width,
+          cropH: localCrop.height
+      });
+  };
+  
+  const handleCropPointerMove = (e: React.PointerEvent) => {
+      if (!localCrop || !imgRef.current || !dragMode.includes('crop') && !['nw','ne','sw','se','n','s','e','w'].includes(dragMode)) return;
+      
+      const dx = (e.clientX - dragStart.x) / layout.scale;
+      const dy = (e.clientY - dragStart.y) / layout.scale;
+
+      let { cropX: x, cropY: y, cropW: w, cropH: h } = dragStart;
+      const imgW = imgRef.current.width;
+      const imgH = imgRef.current.height;
+      const ratio = getRatioValue(aspectRatio);
+
+      if (dragMode === 'move_crop') { 
+        x += dx;
+        y += dy;
+        x = Math.max(0, Math.min(x, imgW - w));
+        y = Math.max(0, Math.min(y, imgH - h));
+      } else {
         if (dragMode.includes('w')) { w -= dx; x += dx; }
         if (dragMode.includes('e')) { w += dx; }
         if (dragMode.includes('n')) { h -= dy; y += dy; }
@@ -300,56 +578,26 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
              if (dragMode.includes('w')) x = dragStart.cropX + dragStart.cropW - w;
            }
         }
-
-        let corrected = false;
-
-        // Check X/Width Bounds
-        if (x < 0) { 
-            w += x; x = 0; corrected = true; 
-        }
-        if (x + w > imgW) { 
-            w = imgW - x; corrected = true; 
-        }
-
-        // If X was corrected and we have a ratio, fix H
-        if (corrected && ratio) {
-             h = w / ratio;
-             if (dragMode.includes('n')) {
-                y = dragStart.cropY + dragStart.cropH - h;
-             }
-        }
-
-        // Check Y/Height Bounds
-        corrected = false;
-        if (y < 0) { 
-            h += y; y = 0; corrected = true; 
-        }
-        if (y + h > imgH) { 
-            h = imgH - y; corrected = true; 
-        }
-
-        // If Y was corrected and we have a ratio, fix W
-        if (corrected && ratio) {
-            w = h * ratio;
-             if (dragMode.includes('w')) {
-                x = dragStart.cropX + dragStart.cropW - w;
-             }
-        }
+        
+        if (x < 0) { w += x; x = 0; }
+        if (x + w > imgW) { w = imgW - x; }
+        if (y < 0) { h += y; y = 0; }
+        if (y + h > imgH) { h = imgH - y; }
 
         if (w < minSize) w = minSize;
         if (h < minSize) h = minSize;
-    }
-
-    setLocalCrop({ x, y, width: w, height: h });
+      }
+      setLocalCrop({ x, y, width: w, height: h });
+  };
+  
+  const handleCropPointerUp = (e: React.PointerEvent) => {
+       if (dragMode !== 'none' && !dragMode.includes('_logo')) {
+        setDragMode('none');
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+        onUpdateCrop(localCrop);
+      }
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (dragMode !== 'none') {
-      setDragMode('none');
-      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-      onUpdateCrop(localCrop);
-    }
-  };
 
   const toStyle = (val: number) => val * layout.scale;
 
@@ -367,8 +615,25 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
   return (
     <div ref={containerRef} className="flex-1 h-full relative flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 overflow-hidden select-none touch-none transition-colors duration-300">
       
+      {/* PHOTO INFO OVERLAY */}
+      <div className="absolute top-4 left-4 z-20 bg-black/60 backdrop-blur-md text-white px-3 py-2 rounded-lg text-xs font-mono border border-white/10 shadow-lg pointer-events-none flex flex-col gap-0.5">
+         <span className="font-bold text-zinc-200">{photo.name}</span>
+         <span className="text-zinc-400">
+             {photo.width} x {photo.height} px
+         </span>
+         <span className="text-zinc-400">
+             AR: {calculateRatio(photo.width, photo.height)} • Size: {formatBytes(photo.sizeInBytes)}
+         </span>
+      </div>
+
       <div style={{ width: layout.width, height: layout.height, position: 'relative' }}>
-        <canvas ref={canvasRef} className="block shadow-xl dark:shadow-none" />
+        <canvas 
+            ref={canvasRef} 
+            className="block shadow-xl dark:shadow-none cursor-crosshair" 
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+        />
 
         {isCropMode && localCrop && (
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
@@ -383,9 +648,9 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
                         cursor: 'move',
                         pointerEvents: 'all'
                     }}
-                    onPointerDown={(e) => handlePointerDown(e, 'move')}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
+                    onPointerDown={(e) => handleCropPointerDown(e, 'move_crop')}
+                    onPointerMove={handleCropPointerMove}
+                    onPointerUp={handleCropPointerUp}
                 >
                     {/* Grid Lines (Rule of Thirds) */}
                     <div className="absolute inset-0 pointer-events-none opacity-80">
@@ -397,32 +662,32 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
                         <div className="absolute left-0 right-0 top-[66.66%] h-px bg-white/50 shadow-[0_0_2px_rgba(0,0,0,0.8)]" />
                     </div>
 
-                    {/* Resize Handles - Improved Visuals */}
+                    {/* Resize Handles */}
                     {/* Corners */}
                     <div 
                         className="absolute -top-1.5 -left-1.5 w-5 h-5 border-t-[3px] border-l-[3px] border-white cursor-nw-resize pointer-events-auto drop-shadow-md" 
-                        onPointerDown={(e) => handlePointerDown(e, 'nw')} 
+                        onPointerDown={(e) => handleCropPointerDown(e, 'nw')} 
                     />
                     <div 
                         className="absolute -top-1.5 -right-1.5 w-5 h-5 border-t-[3px] border-r-[3px] border-white cursor-ne-resize pointer-events-auto drop-shadow-md" 
-                        onPointerDown={(e) => handlePointerDown(e, 'ne')} 
+                        onPointerDown={(e) => handleCropPointerDown(e, 'ne')} 
                     />
                     <div 
                         className="absolute -bottom-1.5 -left-1.5 w-5 h-5 border-b-[3px] border-l-[3px] border-white cursor-sw-resize pointer-events-auto drop-shadow-md" 
-                        onPointerDown={(e) => handlePointerDown(e, 'sw')} 
+                        onPointerDown={(e) => handleCropPointerDown(e, 'sw')} 
                     />
                     <div 
                         className="absolute -bottom-1.5 -right-1.5 w-5 h-5 border-b-[3px] border-r-[3px] border-white cursor-se-resize pointer-events-auto drop-shadow-md" 
-                        onPointerDown={(e) => handlePointerDown(e, 'se')} 
+                        onPointerDown={(e) => handleCropPointerDown(e, 'se')} 
                     />
                     
                     {/* Edges (Only Free mode) */}
                     {aspectRatio === 'Free' && (
                         <>
-                         <div onPointerDown={(e) => handlePointerDown(e, 'n')} className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-4 cursor-n-resize pointer-events-auto flex justify-center"><div className="w-4 h-1 bg-white/80 rounded-full shadow-sm" /></div>
-                         <div onPointerDown={(e) => handlePointerDown(e, 's')} className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-8 h-4 cursor-s-resize pointer-events-auto flex items-end justify-center"><div className="w-4 h-1 bg-white/80 rounded-full shadow-sm" /></div>
-                         <div onPointerDown={(e) => handlePointerDown(e, 'w')} className="absolute top-1/2 -left-2 -translate-y-1/2 h-8 w-4 cursor-w-resize pointer-events-auto flex items-center"><div className="h-4 w-1 bg-white/80 rounded-full shadow-sm" /></div>
-                         <div onPointerDown={(e) => handlePointerDown(e, 'e')} className="absolute top-1/2 -right-2 -translate-y-1/2 h-8 w-4 cursor-e-resize pointer-events-auto flex items-center justify-end"><div className="h-4 w-1 bg-white/80 rounded-full shadow-sm" /></div>
+                         <div onPointerDown={(e) => handleCropPointerDown(e, 'n')} className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-4 cursor-n-resize pointer-events-auto flex justify-center"><div className="w-4 h-1 bg-white/80 rounded-full shadow-sm" /></div>
+                         <div onPointerDown={(e) => handleCropPointerDown(e, 's')} className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-8 h-4 cursor-s-resize pointer-events-auto flex items-end justify-center"><div className="w-4 h-1 bg-white/80 rounded-full shadow-sm" /></div>
+                         <div onPointerDown={(e) => handleCropPointerDown(e, 'w')} className="absolute top-1/2 -left-2 -translate-y-1/2 h-8 w-4 cursor-w-resize pointer-events-auto flex items-center"><div className="h-4 w-1 bg-white/80 rounded-full shadow-sm" /></div>
+                         <div onPointerDown={(e) => handleCropPointerDown(e, 'e')} className="absolute top-1/2 -right-2 -translate-y-1/2 h-8 w-4 cursor-e-resize pointer-events-auto flex items-center justify-end"><div className="h-4 w-1 bg-white/80 rounded-full shadow-sm" /></div>
                         </>
                     )}
                 </div>
