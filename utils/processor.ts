@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-ignore
 import heic2any from 'heic2any';
-import { Adjustments, CropData } from '../types';
+import { Adjustments } from '../types';
 
 /**
  * clamp value between min and max

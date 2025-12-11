@@ -24,6 +24,7 @@ export interface Photo {
   rotation: number; // 0, 90, 180, 270
   adjustments: Adjustments;
   crop: CropData | null;
+  frameOverlay: string | null; // URL of the PNG frame
 }
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = {

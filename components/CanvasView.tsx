@@ -26,12 +26,14 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const frameImgRef = useRef<HTMLImageElement | null>(null); // Ref for frame image
 
   // We maintain a "Display URL" which is the physically rotated version of the image.
   // This allows the Crop tool and Canvas logic to remain simple (they just see a WxH image).
   // This is generated on the fly when rotation changes.
   const [displayUrl, setDisplayUrl] = useState<string | null>(null);
   const [isGeneratingView, setIsGeneratingView] = useState(false);
+  const [frameLoaded, setFrameLoaded] = useState(false); // Track if frame PNG is ready
 
   // Layout state (Display dimensions)
   const [layout, setLayout] = useState({ width: 0, height: 0, top: 0, left: 0, scale: 1 });
@@ -84,6 +86,23 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
         }
     };
   }, [photo.originalUrl, photo.rotation]);
+
+  // Load Frame Image whenever frameOverlay changes
+  useEffect(() => {
+      if (!photo.frameOverlay) {
+          frameImgRef.current = null;
+          setFrameLoaded(false);
+          return;
+      }
+      
+      const img = new Image();
+      img.onload = () => {
+          frameImgRef.current = img;
+          setFrameLoaded(true); // Trigger re-render
+      };
+      img.src = photo.frameOverlay;
+  }, [photo.frameOverlay]);
+
 
   // 1. Initialize Local Crop state
   // We use displayUrl here to ensure we have the correct dimensions loaded in imgRef
@@ -190,8 +209,17 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
     if (!ctx) return;
 
     ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, drawW, drawH);
+    
+    // Apply filters
     applyImageFilters(ctx, drawW, drawH, photo.adjustments);
-  }, [photo.adjustments, photo.crop, isCropMode]);
+    
+    // Apply PNG Frame Overlay (if exists and loaded)
+    if (frameImgRef.current) {
+        // Stretch frame to fit the destination rect
+        ctx.drawImage(frameImgRef.current, 0, 0, drawW, drawH);
+    }
+    
+  }, [photo.adjustments, photo.crop, isCropMode, frameLoaded]); // Re-render when frameLoaded changes
 
   // Trigger render when key dependencies change
   useEffect(() => {
@@ -327,7 +355,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
 
   if (isGeneratingView) {
       return (
-        <div className="flex-1 h-full flex items-center justify-center bg-zinc-950">
+        <div className="flex-1 h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 transition-colors">
             <div className="flex flex-col items-center gap-2">
                 <Loader2 className="animate-spin text-blue-500" size={32} />
                 <span className="text-zinc-500 text-sm">Rotating View...</span>
@@ -337,10 +365,10 @@ export const CanvasView: React.FC<CanvasViewProps> = ({ photo, isCropMode, onUpd
   }
 
   return (
-    <div ref={containerRef} className="flex-1 h-full relative flex items-center justify-center bg-zinc-950 overflow-hidden select-none touch-none">
+    <div ref={containerRef} className="flex-1 h-full relative flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 overflow-hidden select-none touch-none transition-colors duration-300">
       
       <div style={{ width: layout.width, height: layout.height, position: 'relative' }}>
-        <canvas ref={canvasRef} className="block" />
+        <canvas ref={canvasRef} className="block shadow-xl dark:shadow-none" />
 
         {isCropMode && localCrop && (
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>

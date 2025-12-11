@@ -1,16 +1,20 @@
 import React, { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Sidebar } from './components/Sidebar';
+import { LeftSidebar } from './components/LeftSidebar';
 import { Filmstrip } from './components/Filmstrip';
 import { CanvasView } from './components/CanvasView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ProcessingModal } from './components/ProcessingModal';
 import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData } from './types';
 import { createThumbnail, isHeic, convertHeicToJpeg } from './utils/processor';
-import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud } from 'lucide-react';
+import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud, Moon, Sun } from 'lucide-react';
 import { useHistory } from './hooks/useHistory';
+import { useTheme } from './hooks/useTheme';
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
+  
   // Replace direct useState with useHistory
   const { 
     state: photos, 
@@ -25,6 +29,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
+  // Frame Assets State (Session based)
+  const [uploadedFrames, setUploadedFrames] = useState<string[]>([]);
+
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -116,6 +123,7 @@ export default function App() {
           height: thumb.height,
           rotation: 0,
           adjustments: { ...DEFAULT_ADJUSTMENTS },
+          frameOverlay: null,
           crop: null
         });
       } catch (err) {
@@ -189,6 +197,35 @@ export default function App() {
     if (selectedId === id) setSelectedId(null);
   };
 
+  // --- Frame Handlers ---
+  const handleUploadFrame = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (!e.target.files || e.target.files.length === 0) return;
+      const file = e.target.files[0];
+      const url = URL.createObjectURL(file);
+      setUploadedFrames(prev => [url, ...prev]);
+      addToast('success', 'Frame added to library');
+      e.target.value = '';
+  };
+
+  const handleDeleteFrame = (urlToDelete: string) => {
+      setUploadedFrames(prev => prev.filter(url => url !== urlToDelete));
+      // If any photo used this frame, optional: remove it. 
+      // For now, let's keep it on the photo until changed, or we can revoke.
+      // Better to revoke URL if we want to clean up memory, but simple filter is safer for UI state.
+  };
+
+  const handleSelectFrame = (url: string | null) => {
+      if (!selectedId) return;
+      const newPhotos = photos.map(p => {
+          if (p.id === selectedId) {
+              return { ...p, frameOverlay: url };
+          }
+          return p;
+      });
+      pushHistory(newPhotos);
+  };
+
+
   // Called while dragging slider (No History Push)
   const handleAdjustmentChange = (key: keyof Adjustments, value: number) => {
     if (!selectedId) return;
@@ -231,7 +268,13 @@ export default function App() {
   const handleResetAdjustments = () => {
     if (!selectedId) return;
     const newPhotos = photos.map(p => 
-      p.id === selectedId ? { ...p, adjustments: { ...DEFAULT_ADJUSTMENTS }, crop: null, rotation: 0 } : p
+      p.id === selectedId ? { 
+          ...p, 
+          adjustments: { ...DEFAULT_ADJUSTMENTS }, 
+          frameOverlay: null,
+          crop: null, 
+          rotation: 0 
+      } : p
     );
     pushHistory(newPhotos);
     addToast('success', 'Reset successfully');
@@ -275,10 +318,12 @@ export default function App() {
   const handleBatchApply = async () => {
     if (!selectedPhoto) return;
     const settings = { ...selectedPhoto.adjustments };
+    const frame = selectedPhoto.frameOverlay;
     
     await runBatchOperation('Syncing Settings...', (p) => ({
         ...p,
-        adjustments: { ...settings }
+        adjustments: { ...settings },
+        frameOverlay: frame
     }));
     addToast('success', `Synced settings to ${photos.length} photos`);
   };
@@ -368,7 +413,7 @@ export default function App() {
 
   return (
     <div 
-      className="flex flex-col h-screen bg-black text-white overflow-hidden selection:bg-blue-500 selection:text-white"
+      className="flex flex-col h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-white overflow-hidden selection:bg-blue-500 selection:text-white transition-colors duration-300"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -379,27 +424,27 @@ export default function App() {
       {/* Drag Drop Overlay */}
       {isDragging && (
           <div className="fixed inset-0 z-50 bg-blue-600/20 backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl flex items-center justify-center pointer-events-none">
-              <div className="bg-zinc-950 p-6 rounded-2xl flex flex-col items-center shadow-2xl animate-bounce">
+              <div className="bg-white dark:bg-zinc-950 p-6 rounded-2xl flex flex-col items-center shadow-2xl animate-bounce">
                   <UploadCloud size={48} className="text-blue-500 mb-2" />
-                  <span className="text-xl font-bold">Drop photos to upload</span>
+                  <span className="text-xl font-bold dark:text-white text-zinc-900">Drop photos to upload</span>
               </div>
           </div>
       )}
 
       {/* Top Bar */}
-      <header className="h-12 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0">
+      <header className="h-12 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-                <Sparkles className="text-blue-500" size={20} />
-                <h1 className="font-bold text-lg tracking-tight">HanFrame</h1>
+                <Sparkles className="text-blue-600 dark:text-blue-500" size={20} />
+                <h1 className="font-bold text-lg tracking-tight text-zinc-900 dark:text-zinc-100">HanFrame</h1>
             </div>
 
             {/* Undo/Redo Controls */}
-            <div className="flex items-center gap-1 ml-4 border-l border-zinc-800 pl-4 h-6">
+            <div className="flex items-center gap-1 ml-4 border-l border-zinc-200 dark:border-zinc-800 pl-4 h-6">
                 <button 
                     onClick={undo} 
                     disabled={!canUndo}
-                    className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-400 hover:text-white transition-all"
+                    className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
                     title="Undo"
                 >
                     <Undo2 size={16} />
@@ -407,7 +452,7 @@ export default function App() {
                 <button 
                     onClick={redo} 
                     disabled={!canRedo}
-                    className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-400 hover:text-white transition-all"
+                    className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
                     title="Redo"
                 >
                     <Redo2 size={16} />
@@ -421,10 +466,19 @@ export default function App() {
                {selectedPhoto.width}x{selectedPhoto.height} • {selectedPhoto.name}
              </span>
            )}
+
+            <button
+                onClick={toggleTheme}
+                className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors"
+                title="Toggle Theme"
+            >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+
            <button 
              onClick={handleDownload}
              disabled={!selectedPhoto}
-             className="bg-zinc-100 text-black px-3 py-1.5 rounded text-xs font-semibold hover:bg-zinc-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+             className="bg-zinc-100 dark:bg-zinc-100 text-black px-3 py-1.5 rounded text-xs font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors border border-zinc-200 dark:border-transparent"
            >
              <Download size={14} /> Export
            </button>
@@ -434,8 +488,17 @@ export default function App() {
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         
+        {/* Left Sidebar (Frames) */}
+        <LeftSidebar 
+            uploadedFrames={uploadedFrames}
+            activeFrame={selectedPhoto?.frameOverlay || null}
+            onUploadFrame={handleUploadFrame}
+            onSelectFrame={handleSelectFrame}
+            onDeleteFrame={handleDeleteFrame}
+        />
+
         {/* Center Canvas Area */}
-        <main className="flex-1 flex flex-col relative bg-zinc-950/50">
+        <main className="flex-1 flex flex-col relative bg-zinc-100 dark:bg-zinc-950/50 transition-colors duration-300">
           {selectedPhoto ? (
             <CanvasView 
               photo={selectedPhoto} 
@@ -444,12 +507,12 @@ export default function App() {
               aspectRatio={aspectRatio}
             />
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-zinc-600">
-               <div className="w-20 h-20 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6">
+            <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">
+               <div className="w-20 h-20 rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center mb-6 shadow-sm dark:shadow-none">
                   <ImageIcon size={40} className="opacity-50" />
                </div>
                <h3 className="text-lg font-medium text-zinc-400 mb-2">No photo selected</h3>
-               <p className="text-sm text-zinc-600">Drag & drop photos here or use the add button below</p>
+               <p className="text-sm text-zinc-500">Drag & drop photos here or use the add button below</p>
             </div>
           )}
 

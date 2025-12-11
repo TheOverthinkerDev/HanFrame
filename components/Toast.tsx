@@ -36,8 +36,8 @@ const ToastItem: React.FC<{ toast: ToastMessage; onRemove: () => void }> = ({ to
     <div className={`
       pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border backdrop-blur-md animate-in slide-in-from-bottom-5 fade-in duration-300
       ${toast.type === 'success' 
-        ? 'bg-zinc-900/90 border-zinc-700 text-zinc-100' 
-        : 'bg-red-900/90 border-red-700 text-white'}
+        ? 'bg-zinc-900/90 dark:bg-zinc-800/90 border-zinc-700 text-zinc-100' 
+        : 'bg-red-600/90 dark:bg-red-900/90 border-red-500 dark:border-red-700 text-white'}
     `}>
       {toast.type === 'success' ? <CheckCircle size={18} className="text-green-500" /> : <AlertCircle size={18} />}
       <span className="text-sm font-medium">{toast.message}</span>

@@ -31,20 +31,20 @@ const SidebarSection: React.FC<{
     const [isOpen, setIsOpen] = useState(defaultOpen);
 
     return (
-        <div className="border-b border-zinc-800">
+        <div className="border-b border-zinc-200 dark:border-zinc-800 transition-colors">
             <div 
-                className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-900 transition-colors select-none"
+                className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors select-none"
                 onClick={() => setIsOpen(!isOpen)}
             >
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                     {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <span className="flex items-center gap-2 text-zinc-300">{icon} {title}</span>
+                    <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300 transition-colors">{icon} {title}</span>
                 </div>
                 {rightAction && <div onClick={e => e.stopPropagation()}>{rightAction}</div>}
             </div>
             
             {isOpen && (
-                <div className="p-4 bg-zinc-950/50 animate-in slide-in-from-top-2 fade-in duration-200">
+                <div className="p-4 bg-zinc-50/50 dark:bg-zinc-950/50 animate-in slide-in-from-top-2 fade-in duration-200">
                     {children}
                 </div>
             )}
@@ -71,18 +71,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   if (!photo) {
     return (
-      <div className="w-80 border-l border-zinc-800 bg-zinc-950 p-6 flex items-center justify-center text-zinc-500">
+      <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6 flex items-center justify-center text-zinc-500 transition-colors">
         <p>No photo selected</p>
       </div>
     );
   }
 
   return (
-    <div className="w-80 border-l border-zinc-800 bg-zinc-950 flex flex-col h-full overflow-hidden">
+    <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex flex-col h-full overflow-hidden transition-colors duration-300">
       
       {/* Top Header */}
-      <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950 sticky top-0 z-10 shrink-0">
-        <h2 className="font-semibold text-zinc-100">Editor</h2>
+      <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center bg-white dark:bg-zinc-950 sticky top-0 z-10 shrink-0 transition-colors">
+        <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Editor</h2>
         <button 
             onClick={onAuto}
             className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide"
@@ -99,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="grid grid-cols-1 gap-2">
                 <button 
                     onClick={onBatchAuto}
-                    className="w-full py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 flex items-center justify-center gap-2 border border-zinc-800 transition-colors"
+                    className="w-full py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 flex items-center justify-center gap-2 border border-zinc-200 dark:border-zinc-800 transition-colors"
                 >
                     <Zap size={14} className="text-yellow-500" /> Auto Adjust All
                 </button>
@@ -107,14 +107,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex gap-2">
                     <button 
                         onClick={onBatchApply}
-                        className="flex-1 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-800 transition-colors"
+                        className="flex-1 py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors"
                         title="Copy current settings to all"
                     >
                         Sync Settings
                     </button>
                     <button 
                          onClick={onBatchCrop}
-                         className="flex-1 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 rounded text-xs text-zinc-300 border border-zinc-800 transition-colors flex items-center justify-center gap-1"
+                         className="flex-1 py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors flex items-center justify-center gap-1"
                          title="Apply selected aspect ratio to all"
                      >
                          <Scissors size={12} /> Crop All
@@ -129,20 +129,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex gap-2">
                     <button 
                     onClick={toggleCropMode}
-                    className={`flex-1 py-2 px-3 rounded text-sm font-medium border flex items-center justify-center gap-2 transition-all ${isCropMode ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'}`}
+                    className={`flex-1 py-2 px-3 rounded text-sm font-medium border flex items-center justify-center gap-2 transition-all ${isCropMode ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
                     >
                     <Crop size={14} /> {isCropMode ? 'Done' : 'Crop'}
                     </button>
                     <button 
                     onClick={onRotateLeft}
-                    className="py-2 px-3 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+                    className="py-2 px-3 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                     title="Rotate Left"
                     >
                     <RotateCcw size={16} />
                     </button>
                     <button 
                     onClick={onRotateRight}
-                    className="py-2 px-3 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800"
+                    className="py-2 px-3 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                     title="Rotate Right"
                     >
                     <RotateCw size={16} />
@@ -155,7 +155,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <button
                         key={ratio}
                         onClick={() => setAspectRatio(ratio as AspectRatio)}
-                        className={`text-xs py-1.5 rounded border ${currentAspectRatio === ratio ? 'bg-zinc-800 border-zinc-600 text-white' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'}`}
+                        className={`text-xs py-1.5 rounded border transition-colors ${currentAspectRatio === ratio ? 'bg-zinc-800 border-zinc-600 text-white' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
                         >
                         {ratio}
                         </button>
@@ -167,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
            </div>
         </SidebarSection>
-
+        
         {/* LIGHT */}
         <SidebarSection 
             title="Light" 
@@ -179,7 +179,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onChange('exposure', 0);
                     onChange('contrast', 0);
                     onCommit();
-                  }} className="text-[10px] text-zinc-600 hover:text-zinc-400 px-2 py-1">
+                  }} className="text-[10px] text-zinc-500 hover:text-zinc-800 dark:text-zinc-600 dark:hover:text-zinc-400 px-2 py-1 transition-colors">
                     Reset
                 </button>
             }
@@ -213,13 +213,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onChange('vibrance', 0);
                     onChange('saturation', 0);
                     onCommit();
-                  }} className="text-[10px] text-zinc-600 hover:text-zinc-400 px-2 py-1">
+                  }} className="text-[10px] text-zinc-500 hover:text-zinc-800 dark:text-zinc-600 dark:hover:text-zinc-400 px-2 py-1 transition-colors">
                     Reset
                 </button>
             }
         >
           <div className="space-y-6">
-            <div className="bg-zinc-900/40 p-3 rounded-lg border border-zinc-800/50">
+            <div className="bg-white dark:bg-zinc-900/40 p-3 rounded-lg border border-zinc-200 dark:border-zinc-800/50 shadow-sm dark:shadow-none transition-colors">
                <Slider 
                 label="Temp" 
                 value={adjustments.temperature} 
@@ -227,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onAfterChange={onCommit}
                 onReset={() => { onChange('temperature', 0); onCommit(); }}
               />
-              <div className="w-full h-1 mt-[-10px] rounded mb-4 bg-gradient-to-r from-blue-900 via-zinc-700 to-yellow-900 opacity-30 pointer-events-none" />
+              <div className="w-full h-1 mt-[-10px] rounded mb-4 bg-gradient-to-r from-blue-900 via-zinc-400 dark:via-zinc-700 to-yellow-900 opacity-50 pointer-events-none" />
 
               <Slider 
                 label="Tint" 
@@ -236,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onAfterChange={onCommit}
                 onReset={() => { onChange('tint', 0); onCommit(); }}
               />
-               <div className="w-full h-1 mt-[-10px] rounded bg-gradient-to-r from-green-900 via-zinc-700 to-fuchsia-900 opacity-30 pointer-events-none" />
+               <div className="w-full h-1 mt-[-10px] rounded bg-gradient-to-r from-green-900 via-zinc-400 dark:via-zinc-700 to-fuchsia-900 opacity-50 pointer-events-none" />
             </div>
 
             <Slider 
@@ -258,8 +258,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       </div>
 
-      <div className="p-4 border-t border-zinc-800 bg-zinc-950 shrink-0">
-        <button onClick={onReset} className="w-full py-2 rounded border border-zinc-800 bg-zinc-900 text-zinc-400 text-xs hover:text-white hover:border-zinc-700 transition-colors">
+      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shrink-0 transition-colors">
+        <button onClick={onReset} className="w-full py-2 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 text-xs hover:bg-zinc-100 dark:hover:text-white dark:hover:border-zinc-700 transition-colors">
           Reset All Settings
         </button>
       </div>
