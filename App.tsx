@@ -169,8 +169,10 @@ export default function App() {
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Prevent overlay if Export Modal is open
+    if (isExportModalOpen) return;
     if (!isDragging) setIsDragging(true);
-  }, [isDragging]);
+  }, [isDragging, isExportModalOpen]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -185,6 +187,9 @@ export default function App() {
     e.stopPropagation();
     setIsDragging(false);
 
+    // Prevent dropping files if Export Modal is open
+    if (isExportModalOpen) return;
+
     const files: File[] = [];
     const fileList = e.dataTransfer.files;
     for (let i = 0; i < fileList.length; i++) {
@@ -197,7 +202,7 @@ export default function App() {
     if (files.length > 0) {
         await processFiles(files);
     }
-  }, [photos, selectedId, pushHistory]); // Dependencies for processFiles logic closure
+  }, [photos, selectedId, pushHistory, isExportModalOpen]); // Added isExportModalOpen dependency
 
   const handleRemovePhoto = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -557,8 +562,11 @@ export default function App() {
   };
 
   const handleFinalExport = async (config: ExportConfig) => {
-      const photosToExport = photos.filter(p => config.selectedIds.includes(p.id));
-      if (photosToExport.length === 0) return;
+      // Calculate total photos to export (Root + Folders)
+      const folderPhotosCount = config.structure.reduce((acc, f) => acc + f.photoIds.length, 0);
+      const totalCount = config.rootPhotoIds.length + folderPhotosCount;
+      
+      if (totalCount === 0) return;
 
       setIsProcessing(true);
       setProcessingMessage('Generating images...');
@@ -566,22 +574,59 @@ export default function App() {
 
       try {
           const zip = new JSZip();
-          const folder = zip.folder(config.prefix) || zip;
 
-          for (let i = 0; i < photosToExport.length; i++) {
-              const photo = photosToExport[i];
-              setProcessingMessage(`Processing ${i + 1}/${photosToExport.length}: ${photo.name}`);
-              
-              const blob = await generateExportBlob(photo, config.format, config.quality);
-              if (blob) {
-                  // Pad index with zeros (e.g. 001, 002)
-                  const indexStr = (i + 1).toString().padStart(3, '0');
-                  const ext = config.format === 'jpeg' ? 'jpg' : 'png';
-                  const fileName = `${config.prefix}_${indexStr}.${ext}`;
+          // Helper to process a list of IDs and add to a specific zip folder
+          const processPhotoList = async (ids: string[], zipFolder: any, currentProcessedCount: { val: number }) => {
+              for (let i = 0; i < ids.length; i++) {
+                  const id = ids[i];
+                  const photo = photos.find(p => p.id === id);
+                  if (!photo) continue;
+
+                  currentProcessedCount.val++;
+                  setProcessingMessage(`Processing ${currentProcessedCount.val}/${totalCount}: ${photo.name}`);
                   
-                  folder.file(fileName, blob);
+                  const blob = await generateExportBlob(
+                      photo, 
+                      config.format, 
+                      config.quality,
+                      { mode: config.resizeMode, value: config.resizeValue },
+                      config.includeLogos
+                  );
+                  
+                  if (blob) {
+                      let ext = 'jpg';
+                      if (config.format === 'png') ext = 'png';
+                      if (config.format === 'webp') ext = 'webp';
+
+                      let fileName = '';
+                      if (config.namingMode === 'sequence') {
+                          // Sequence is global or per folder? Let's make it per folder for now or global?
+                          // Standard approach: Global sequence might be confusing if split across folders.
+                          // Let's use the loop index `i` for simplicity relative to the batch.
+                          const indexStr = (i + 1).toString().padStart(3, '0');
+                          fileName = `${config.prefix}_${indexStr}.${ext}`;
+                      } else {
+                          // Original name + suffix
+                          const lastDot = photo.name.lastIndexOf('.');
+                          const baseName = lastDot !== -1 ? photo.name.substring(0, lastDot) : photo.name;
+                          fileName = `${baseName}${config.suffix || ''}.${ext}`;
+                      }
+                      
+                      zipFolder.file(fileName, blob);
+                  }
+                  setProgress((currentProcessedCount.val / totalCount) * 100);
               }
-              setProgress(((i + 1) / photosToExport.length) * 100);
+          };
+
+          const counter = { val: 0 };
+
+          // 1. Process Root Photos
+          await processPhotoList(config.rootPhotoIds, zip, counter);
+
+          // 2. Process Folders
+          for (const folder of config.structure) {
+              const folderZip = zip.folder(folder.name);
+              await processPhotoList(folder.photoIds, folderZip, counter);
           }
 
           setProcessingMessage('Zipping files...');
@@ -590,7 +635,10 @@ export default function App() {
           // Trigger download
           const link = document.createElement('a');
           link.href = URL.createObjectURL(zipContent);
-          link.download = `${config.prefix}_export.zip`;
+          
+          const zipName = config.namingMode === 'sequence' ? `${config.prefix}_export.zip` : 'photos_export.zip';
+          
+          link.download = zipName;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);

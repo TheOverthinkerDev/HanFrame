@@ -1,4 +1,3 @@
-
 import React from 'react';
 // @ts-ignore
 import heic2any from 'heic2any';
@@ -320,8 +319,10 @@ export const calculateReadableRatio = (w: number, h: number): string => {
  */
 export const generateExportBlob = async (
     photo: Photo, 
-    format: 'jpeg' | 'png', 
-    quality: number
+    format: 'jpeg' | 'png' | 'webp', 
+    quality: number,
+    resizeConfig?: { mode: 'original' | 'width' | 'height' | 'scale', value: number },
+    includeLogos: boolean = true
 ): Promise<Blob | null> => {
     return new Promise(async (resolve, reject) => {
         try {
@@ -337,12 +338,12 @@ export const generateExportBlob = async (
                 await new Promise((r) => { frameImg.onload = r; });
             }
 
-            const logoImgs = await Promise.all(photo.logos.map(async (l) => {
+            const logoImgs = includeLogos ? await Promise.all(photo.logos.map(async (l) => {
                 const li = new Image();
                 li.src = l.url;
                 await new Promise((r) => { li.onload = r; });
                 return { layer: l, img: li };
-            }));
+            })) : [];
 
             // 3. Determine Canvas Size & Rotation
             // Need to handle Orientation Rotation FIRST
@@ -354,7 +355,7 @@ export const generateExportBlob = async (
                 baseH = img.width;
             }
 
-            // 4. Setup Canvas
+            // 4. Setup Main Processing Canvas
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             if (!ctx) throw new Error("No context");
@@ -445,9 +446,50 @@ export const generateExportBlob = async (
                 ctx.restore();
             });
 
-            // 9. Export
-            const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
-            canvas.toBlob((blob) => {
+            // 9. Handle Resizing
+            let outputCanvas = canvas;
+            if (resizeConfig && resizeConfig.mode !== 'original') {
+                let targetW = viewW;
+                let targetH = viewH;
+                const aspect = viewW / viewH;
+
+                if (resizeConfig.mode === 'width') {
+                    targetW = resizeConfig.value;
+                    targetH = targetW / aspect;
+                } else if (resizeConfig.mode === 'height') {
+                    targetH = resizeConfig.value;
+                    targetW = targetH * aspect;
+                } else if (resizeConfig.mode === 'scale') {
+                    const scale = resizeConfig.value / 100;
+                    targetW = viewW * scale;
+                    targetH = viewH * scale;
+                }
+                
+                // Prevent zero or negative dimensions
+                targetW = Math.max(1, Math.floor(targetW));
+                targetH = Math.max(1, Math.floor(targetH));
+
+                if (targetW !== viewW || targetH !== viewH) {
+                    const resizeCanvas = document.createElement('canvas');
+                    resizeCanvas.width = targetW;
+                    resizeCanvas.height = targetH;
+                    const resCtx = resizeCanvas.getContext('2d');
+                    if (resCtx) {
+                        // High quality scaling
+                        resCtx.imageSmoothingEnabled = true;
+                        resCtx.imageSmoothingQuality = 'high';
+                        resCtx.drawImage(canvas, 0, 0, targetW, targetH);
+                        outputCanvas = resizeCanvas;
+                    }
+                }
+            }
+
+            // 10. Export
+            let mimeType = 'image/jpeg';
+            if (format === 'png') mimeType = 'image/png';
+            if (format === 'webp') mimeType = 'image/webp';
+
+            outputCanvas.toBlob((blob) => {
                 if (blob) resolve(blob);
                 else reject(new Error("Blob failed"));
             }, mimeType, quality);
