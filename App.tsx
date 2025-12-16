@@ -54,7 +54,17 @@ export default function App() {
 
   // --- Toast Helpers ---
   const addToast = (type: 'success' | 'error', message: string) => {
-    setToasts(prev => [...prev, { id: uuidv4(), type, message }]);
+    setToasts(prev => {
+        // 1. Deduplication: Don't add if exact message already exists
+        if (prev.some(t => t.message === message)) {
+            return prev;
+        }
+
+        // 2. Limit: Keep max 3 toasts to prevent UI clutter in header
+        const limited = prev.length >= 3 ? prev.slice(1) : prev;
+        
+        return [...limited, { id: uuidv4(), type, message }];
+    });
   };
 
   const removeToast = (id: string) => {
@@ -306,9 +316,17 @@ export default function App() {
 
   const handleAddLogoToPhoto = (url: string) => {
       if (!selectedId) return;
+      
+      // Find the asset to get its name for sorting
+      const asset = uploadedLogos.find(l => l.url === url);
+      const assetName = asset ? asset.name : 'Logo';
+      // Strip extension for cleaner grouping
+      const cleanName = assetName.lastIndexOf('.') !== -1 ? assetName.substring(0, assetName.lastIndexOf('.')) : assetName;
+
       const newLogo: LogoLayer = {
           id: uuidv4(),
           url,
+          name: cleanName,
           x: 0.5, // Center
           y: 0.5,
           scale: 0.2, // Start at 20% size relative to min dim
@@ -490,25 +508,41 @@ export default function App() {
 
   const handleBatchCrop = async () => {
     if (photos.length === 0) return;
+    
+    let targetRatio = 1;
 
+    // Determine target ratio based on mode
     if (aspectRatio === 'Free') {
-      addToast('error', 'Select a specific aspect ratio (e.g. 16:9) first');
-      return;
+        if (!selectedPhoto || !selectedPhoto.crop) {
+            // If Free mode but no crop set, try to use the image's current visible ratio
+            if (selectedPhoto) {
+               const rot = selectedPhoto.rotation || 0;
+               const isVertical = rot % 180 !== 0;
+               const w = isVertical ? selectedPhoto.height : selectedPhoto.width;
+               const h = isVertical ? selectedPhoto.width : selectedPhoto.height;
+               targetRatio = w / h;
+            } else {
+               addToast('error', 'Select a photo with a crop to sync.');
+               return;
+            }
+        } else {
+             targetRatio = selectedPhoto.crop.width / selectedPhoto.crop.height;
+        }
+    } else {
+         const getRatio = (ar: AspectRatio): number => {
+            switch(ar) {
+                case '1:1': return 1;
+                case '16:9': return 16/9;
+                case '4:3': return 4/3;
+                case '3:2': return 3/2;
+                default: return 1;
+            }
+        };
+        targetRatio = getRatio(aspectRatio);
     }
     
-    const getRatio = (ar: AspectRatio): number => {
-        switch(ar) {
-            case '1:1': return 1;
-            case '16:9': return 16/9;
-            case '4:3': return 4/3;
-            case '3:2': return 3/2;
-            default: return 1;
-        }
-    };
-    const targetRatio = getRatio(aspectRatio);
-
-    await runBatchOperation(`Cropping to ${aspectRatio}...`, (p) => {
-        // We need to account for rotation when calculating batch crop!
+    await runBatchOperation(`Cropping all to match...`, (p) => {
+        // Account for rotation
         const rot = p.rotation || 0;
         const isVertical = rot % 180 !== 0;
         
@@ -522,21 +556,24 @@ export default function App() {
         let cropH = height;
 
         if (currentRatio > targetRatio) {
+            // Image is wider than target, crop width
             cropW = height * targetRatio;
         } else {
+            // Image is taller than target, crop height
             cropH = width / targetRatio;
         }
+        
+        // Center the crop
         const x = (width - cropW) / 2;
         const y = (height - cropH) / 2;
 
         return {
             ...p,
             crop: { x, y, width: cropW, height: cropH },
-            // Batch crop also resets manual straightening for simplicity unless we want to sync it
         };
     });
     
-    addToast('success', `Cropped ${photos.length} photos to ${aspectRatio}`);
+    addToast('success', `Cropped ${photos.length} photos`);
   };
   
   const handleUpdateCrop = (crop: CropData | null) => {
@@ -660,7 +697,6 @@ export default function App() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <ProcessingModal isOpen={isProcessing} message={processingMessage} progress={progress} />
       
       <ExportModal 
@@ -707,6 +743,15 @@ export default function App() {
                 >
                     <Redo2 size={16} />
                 </button>
+            </div>
+
+            {/* HEADER TOASTS */}
+            <div className="flex items-center ml-2 relative h-8">
+                 <ToastContainer 
+                    toasts={toasts} 
+                    removeToast={removeToast} 
+                    className="flex items-center gap-2 pointer-events-none"
+                 />
             </div>
         </div>
         

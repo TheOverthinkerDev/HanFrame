@@ -18,6 +18,7 @@ export interface CropData {
 export interface LogoLayer {
   id: string;
   url: string;
+  name?: string; // Brand/File name for sorting
   x: number; // 0-1 (Relative to image width)
   y: number; // 0-1 (Relative to image height)
   scale: number; // 0-1 (Relative to image min dimension)

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Photo } from '../types';
-import { Plus, X, ImagePlus } from 'lucide-react';
+import { Plus, X, ImagePlus, Stamp } from 'lucide-react';
 import { ThumbnailCanvas } from './ThumbnailCanvas';
 
 interface FilmstripProps {
@@ -35,29 +35,46 @@ export const Filmstrip: React.FC<FilmstripProps> = ({ photos, selectedId, onSele
         <div className="w-px h-10 bg-zinc-200 dark:bg-zinc-800 mx-1 shrink-0" />
 
         {/* Thumbnails */}
-        {photos.map((photo) => (
-          <div 
-            key={photo.id}
-            onClick={() => onSelect(photo.id)}
-            className={`relative group shrink-0 w-20 h-20 bg-zinc-100 dark:bg-zinc-900 rounded-lg overflow-hidden cursor-pointer border-2 transition-all shadow-sm ${selectedId === photo.id ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md scale-105 z-10' : 'border-transparent opacity-70 hover:opacity-100 hover:border-zinc-300 dark:hover:border-zinc-700'}`}
-          >
-            {/* Use ThumbnailCanvas instead of img for composite preview */}
-            <ThumbnailCanvas photo={photo} />
-            
-            {/* Cropped Indicator */}
-            {photo.crop && (
-               <div className="absolute top-1 left-1 w-2 h-2 bg-blue-500 rounded-full shadow-sm pointer-events-none" />
-            )}
-            
-            {/* Remove Button */}
-            <button 
-              onClick={(e) => onRemove(photo.id, e)}
-              className="absolute top-0.5 right-0.5 p-1 bg-black/60 hover:bg-red-500 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm"
+        {photos.map((photo) => {
+          // Identify Primary Brand/Logo for Badge
+          const primaryLogo = photo.logos.length > 0 ? photo.logos[photo.logos.length - 1] : null;
+
+          return (
+            <div 
+              key={photo.id}
+              onClick={() => onSelect(photo.id)}
+              className={`relative group shrink-0 w-20 h-20 bg-zinc-100 dark:bg-zinc-900 rounded-lg overflow-hidden cursor-pointer border-2 transition-all shadow-sm ${selectedId === photo.id ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md scale-105 z-10' : 'border-transparent opacity-70 hover:opacity-100 hover:border-zinc-300 dark:hover:border-zinc-700'}`}
             >
-              <X size={10} />
-            </button>
-          </div>
-        ))}
+              {/* Use ThumbnailCanvas instead of img for composite preview */}
+              <ThumbnailCanvas photo={photo} />
+              
+              {/* Indicators Container */}
+              <div className="absolute top-0 left-0 right-0 p-1 flex justify-between pointer-events-none">
+                  {/* Cropped Indicator */}
+                  {photo.crop && (
+                     <div className="w-2 h-2 bg-blue-500 rounded-full shadow-sm" title="Cropped" />
+                  )}
+              </div>
+
+              {/* Logo Badge (Bottom) */}
+              {primaryLogo && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-[2px] px-1 py-0.5 flex items-center justify-center pointer-events-none">
+                      <span className="text-[8px] font-bold text-white truncate max-w-full leading-none">
+                          {primaryLogo.name || 'Brand'}
+                      </span>
+                  </div>
+              )}
+              
+              {/* Remove Button */}
+              <button 
+                onClick={(e) => onRemove(photo.id, e)}
+                className="absolute top-0.5 right-0.5 p-1 bg-black/60 hover:bg-red-500 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          );
+        })}
         
         {/* End Padding */}
         <div className="w-4 shrink-0" />

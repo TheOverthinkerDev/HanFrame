@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Photo } from '../types';
-import { Download, X, Check, Settings2, Minimize2, Type, Layers, FolderPlus, Folder, Trash2, GripVertical, AlertCircle } from 'lucide-react';
+import { Download, X, Check, Settings2, Minimize2, Type, Layers, FolderPlus, Folder, Trash2, GripVertical, AlertCircle, Wand2 } from 'lucide-react';
 import { ThumbnailCanvas } from './ThumbnailCanvas';
+import { v4 as uuidv4 } from 'uuid';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -77,7 +78,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, photo
 
   const handleCreateFolder = () => {
       const newFolder: FolderStructure = {
-          id: crypto.randomUUID(),
+          id: uuidv4(),
           name: `Folder ${folders.length + 1}`,
           photoIds: []
       };
@@ -94,6 +95,39 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, photo
 
   const handleRenameFolder = (folderId: string, newName: string) => {
       setFolders(prev => prev.map(f => f.id === folderId ? { ...f, name: newName } : f));
+  };
+
+  // --- Auto Sort Logic ---
+  const handleAutoGroupByLogo = () => {
+    // Collect all photo IDs (from root and existing folders to be safe, essentially reset sort)
+    // Actually, let's just work with all available IDs to do a full fresh sort
+    
+    const newFolders: FolderStructure[] = [];
+    const newRootIds: string[] = [];
+    const usedFolderNames = new Set<string>();
+
+    availableIds.forEach(id => {
+        const photo = photos.find(p => p.id === id);
+        if (photo && photo.logos.length > 0) {
+            // Use the name of the top-most logo (last in array) or first? 
+            // Usually top-most is the most relevant "Brand".
+            // Let's use the first one as "Primary".
+            const brandName = photo.logos[0].name || 'Branded';
+            
+            // Find or create folder
+            let folder = newFolders.find(f => f.name === brandName);
+            if (!folder) {
+                folder = { id: uuidv4(), name: brandName, photoIds: [] };
+                newFolders.push(folder);
+            }
+            folder.photoIds.push(id);
+        } else {
+            newRootIds.push(id);
+        }
+    });
+
+    setFolders(newFolders);
+    setRootIds(newRootIds);
   };
 
   // --- Drag & Drop Logic ---
@@ -191,6 +225,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, photo
             `}
           >
               <ThumbnailCanvas photo={photo} className="w-full h-full object-cover pointer-events-none" />
+              {/* Optional: Show Badge in Sort View too */}
+              {photo.logos.length > 0 && (
+                  <div className="absolute bottom-0 inset-x-0 bg-black/50 text-[8px] text-white text-center py-0.5 truncate px-1">
+                      {photo.logos[0].name}
+                  </div>
+              )}
           </div>
       );
   };
@@ -299,12 +339,21 @@ export const ExportModal: React.FC<ExportModalProps> = ({ isOpen, onClose, photo
                         <Folder size={16} className="text-blue-500" />
                         <h3 className="text-sm font-bold uppercase text-zinc-500">Folder Organizer</h3>
                     </div>
-                    <button 
-                        onClick={handleCreateFolder}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded border border-blue-200 dark:border-blue-900/50 text-xs font-medium transition-colors"
-                    >
-                        <FolderPlus size={14} /> New Folder
-                    </button>
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={handleAutoGroupByLogo}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded border border-purple-200 dark:border-purple-900/50 text-xs font-medium transition-colors"
+                            title="Automatically create folders for each Brand Logo and move photos"
+                        >
+                            <Wand2 size={14} /> Auto Group by Logo
+                        </button>
+                        <button 
+                            onClick={handleCreateFolder}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded border border-blue-200 dark:border-blue-900/50 text-xs font-medium transition-colors"
+                        >
+                            <FolderPlus size={14} /> New Folder
+                        </button>
+                    </div>
                 </div>
                 
                 {/* Organizer Canvas */}

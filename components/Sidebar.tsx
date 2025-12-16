@@ -5,7 +5,7 @@ import { formatBytes, calculateReadableRatio } from '../utils/processor';
 import { 
     Wand2, RotateCcw, RotateCw, Crop, Layers, Scissors, Zap, 
     Sun, Palette, Layout, Sliders, Image as ImageIcon, Plus, 
-    Trash2, Copy, X, Pencil, Frame, Stamp 
+    Trash2, Copy, X, Pencil, Frame, Stamp, Check 
 } from 'lucide-react';
 
 // --- Types ---
@@ -256,6 +256,14 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         {activeTab === 'crop' && (
             <div className="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
                 
+                {/* Done / Confirm Crop Button */}
+                <button 
+                    onClick={() => handleTabChange('tune')} // Switch back to Tune, effectively hiding crop mode
+                    className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm flex items-center justify-center gap-2 text-sm font-semibold transition-colors mb-2"
+                >
+                    <Check size={16} /> Apply / Done
+                </button>
+
                 {/* Rotation Controls */}
                 <div className="bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg flex justify-between border border-zinc-200 dark:border-zinc-800">
                      <button onClick={props.onRotateLeft} className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded transition-colors text-zinc-600 dark:text-zinc-400" title="Rotate Left"><RotateCcw size={18} /></button>
@@ -297,12 +305,11 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                  <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800">
                     <button 
                         onClick={props.onBatchCrop}
-                        disabled={props.currentAspectRatio === 'Free'}
                         className="w-full py-2 px-3 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                         <Scissors size={14} /> Crop All Photos
                     </button>
-                    {props.currentAspectRatio === 'Free' && <p className="text-[10px] text-zinc-400 mt-2 text-center">Select a preset ratio to batch crop.</p>}
+                    {props.currentAspectRatio === 'Free' && <p className="text-[10px] text-zinc-400 mt-2 text-center">Batch crop will use the current photo's aspect ratio.</p>}
                  </div>
             </div>
         )}
@@ -385,25 +392,32 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                          {props.uploadedLogos.map((asset) => (
                              <div key={asset.id} className="group relative">
                                 <div 
-                                    className="relative aspect-square rounded-md bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer overflow-hidden hover:border-blue-500 p-1 flex items-center justify-center"
+                                    className="relative aspect-square rounded-md bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer overflow-hidden hover:border-blue-500 hover:shadow-md transition-all flex items-center justify-center p-2"
                                     onClick={() => props.onAddLogoToPhoto(asset.url)}
+                                    title="Click to add to photo"
                                 >
                                     <img src={asset.url} alt={asset.name} className="max-w-full max-h-full object-contain" />
+                                    
+                                    {/* Overlay on hover to indicate action */}
+                                    <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+
                                     <button 
                                         onClick={(e) => { e.stopPropagation(); props.onDeleteLogoAsset(asset.id); }}
-                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="absolute top-1 right-1 z-20 p-1 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
                                     >
-                                        <X size={10} />
+                                        <Trash2 size={10} />
                                     </button>
                                 </div>
+                                
+                                {/* Editable Name */}
                                 <EditableLabel 
                                     value={asset.name} 
-                                    onSave={(n) => props.onRenameLogo(asset.id, n)} 
-                                    className="mt-1 text-[9px] text-zinc-500" 
+                                    onSave={(newName) => props.onRenameLogo(asset.id, newName)}
+                                    className="text-[10px] text-zinc-500 dark:text-zinc-400 justify-center"
                                 />
-                             </div>
-                         ))}
-                    </div>
+                        </div>
+                    ))}
+                </div>
                     {props.photo.logos.length > 0 && (
                         <button onClick={props.onBatchLogo} className="w-full mt-2 py-1.5 text-[10px] bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800">
                             Sync Logos to All
