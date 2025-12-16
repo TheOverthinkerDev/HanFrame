@@ -20,11 +20,12 @@ export const Slider: React.FC<SliderProps> = ({ label, value, min = -100, max = 
         <button 
           onClick={onReset}
           className={`text-xs ${value !== 0 ? 'text-blue-500 dark:text-blue-400 opacity-100' : 'text-zinc-400 dark:text-zinc-600 opacity-0'} transition-all cursor-pointer hover:text-blue-600 dark:hover:text-blue-300`}
+          title="Click to reset"
         >
           {value}
         </button>
       </div>
-      <div className="relative h-6 flex items-center">
+      <div className="relative flex items-center">
         <input
           type="range"
           min={min}
@@ -33,10 +34,11 @@ export const Slider: React.FC<SliderProps> = ({ label, value, min = -100, max = 
           onChange={(e) => onChange(Number(e.target.value))}
           onPointerUp={onAfterChange}
           onKeyUp={onAfterChange}
-          className="w-full h-1 bg-zinc-200 dark:bg-zinc-700 rounded-lg appearance-none cursor-pointer focus:outline-none focus:bg-zinc-300 dark:focus:bg-zinc-600 accent-blue-600 dark:accent-blue-500 transition-colors"
+          onDoubleClick={onReset}
+          title="Double click handle to reset"
+          className="range-slider"
         />
-        {/* Center notch */}
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-0.5 h-2 bg-zinc-400 dark:bg-zinc-500 pointer-events-none" />
+        {/* Center notch visual removed as it might conflict with the custom track styling, but logic remains valid */}
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+
 export interface Adjustments {
   exposure: number; // -100 to 100
   contrast: number; // -100 to 100
@@ -31,11 +32,18 @@ export interface Photo {
   width: number;
   height: number;
   sizeInBytes?: number; // File size
-  rotation: number; // 0, 90, 180, 270
+  rotation: number; // 0, 90, 180, 270 (Orientation)
+  straighten: number; // -45 to 45 (Fine rotation)
   adjustments: Adjustments;
   crop: CropData | null;
   frameOverlay: string | null; // URL of the PNG frame
   logos: LogoLayer[];
+}
+
+export interface Asset {
+  id: string;
+  url: string;
+  name: string;
 }
 
 export const DEFAULT_ADJUSTMENTS: Adjustments = {

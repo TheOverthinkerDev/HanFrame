@@ -1,25 +1,101 @@
 import React, { useState } from 'react';
-import { Frame, Plus, Trash2, Image as ImageIcon, XCircle, Stamp, Layers, Copy, X } from 'lucide-react';
+import { Frame, Plus, Trash2, Image as ImageIcon, XCircle, Stamp, Layers, Copy, X, Pencil } from 'lucide-react';
+import { Asset } from '../types';
 
 interface LeftSidebarProps {
   // Frame props
-  uploadedFrames: string[];
+  uploadedFrames: Asset[];
   activeFrame: string | null;
   onUploadFrame: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSelectFrame: (url: string | null) => void;
-  onDeleteFrame: (url: string) => void;
+  onDeleteFrame: (id: string) => void;
+  onRenameFrame: (id: string, newName: string) => void;
   onBatchFrame: () => void;
   
   // Logo props
-  uploadedLogos: string[];
+  uploadedLogos: Asset[];
   hasLogos: boolean;
   onUploadLogo: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddLogoToPhoto: (url: string) => void;
-  onDeleteLogoAsset: (url: string) => void;
+  onDeleteLogoAsset: (id: string) => void;
+  onRenameLogo: (id: string, newName: string) => void;
   onBatchLogo: () => void;
 }
 
 type Tab = 'frames' | 'logos';
+
+const EditableLabel: React.FC<{ 
+    value: string; 
+    onSave: (val: string) => void; 
+    className?: string 
+}> = ({ value, onSave, className }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    
+    // Parse filename to separate name and extension
+    const lastDotIndex = value.lastIndexOf('.');
+    const hasExtension = lastDotIndex !== -1;
+    // extension includes the dot, e.g. ".png"
+    const extension = hasExtension ? value.substring(lastDotIndex) : ''; 
+    const currentBaseName = hasExtension ? value.substring(0, lastDotIndex) : value;
+
+    const [tempName, setTempName] = useState(currentBaseName);
+
+    // Reset temp name when entering edit mode or value changes
+    React.useEffect(() => {
+        if (!isEditing) {
+            setTempName(currentBaseName);
+        }
+    }, [currentBaseName, isEditing]);
+
+    const handleSave = () => {
+        setIsEditing(false);
+        const finalName = tempName.trim();
+        // If empty, revert to original. If changed, save with extension.
+        if (finalName && finalName !== currentBaseName) {
+            onSave(finalName + extension);
+        } else {
+            setTempName(currentBaseName);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleSave();
+        }
+        if (e.key === 'Escape') {
+            setIsEditing(false);
+            setTempName(currentBaseName);
+        }
+    };
+
+    if (isEditing) {
+        return (
+            <div className={`flex items-center w-full ${className}`} onClick={(e) => e.stopPropagation()}>
+                <input 
+                    autoFocus
+                    type="text" 
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    onBlur={handleSave}
+                    onKeyDown={handleKeyDown}
+                    className="min-w-0 flex-1 bg-white dark:bg-zinc-800 border border-blue-500 rounded px-1 py-0.5 text-xs focus:outline-none text-zinc-900 dark:text-zinc-100"
+                />
+                <span className="text-zinc-400 dark:text-zinc-500 text-[10px] ml-0.5 shrink-0 select-none">{extension}</span>
+            </div>
+        );
+    }
+
+    return (
+        <div 
+            className={`group/label flex items-center gap-1 cursor-text w-full overflow-hidden ${className}`}
+            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            title="Click to rename"
+        >
+            <span className="truncate">{value}</span>
+            <Pencil size={10} className="opacity-0 group-hover/label:opacity-50 shrink-0 text-zinc-400" />
+        </div>
+    );
+};
 
 export const LeftSidebar: React.FC<LeftSidebarProps> = ({
   uploadedFrames,
@@ -27,12 +103,14 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
   onUploadFrame,
   onSelectFrame,
   onDeleteFrame,
+  onRenameFrame,
   onBatchFrame,
   uploadedLogos,
   hasLogos,
   onUploadLogo,
   onAddLogoToPhoto,
   onDeleteLogoAsset,
+  onRenameLogo,
   onBatchLogo
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('frames');
@@ -69,7 +147,8 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                         <Plus className="w-5 h-5 mb-1 text-zinc-400 dark:text-zinc-500 group-hover:text-blue-500" />
                         <p className="text-[10px] text-zinc-500 dark:text-zinc-400 group-hover:text-blue-500 font-medium uppercase text-center hidden md:block">Upload Frame</p>
                     </div>
-                    <input type="file" className="hidden" accept="image/png,image/webp" onChange={onUploadFrame} />
+                    {/* Added multiple attribute */}
+                    <input type="file" multiple className="hidden" accept="image/png,image/webp" onChange={onUploadFrame} />
                 </label>
 
                 {/* Batch Action & Remove Action */}
@@ -92,23 +171,30 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
                 {/* Frame List */}
                 <div className="grid grid-cols-1 gap-3">
-                    {uploadedFrames.map((url, index) => (
-                        <div 
-                            key={index} 
-                            className={`relative group w-full aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border-2 cursor-pointer overflow-hidden transition-all ${activeFrame === url ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-transparent hover:border-zinc-300 dark:hover:border-zinc-700'}`}
-                            onClick={() => onSelectFrame(url)}
-                        >
-                            <div className="absolute inset-2 bg-zinc-300 dark:bg-zinc-800 rounded-sm overflow-hidden flex items-center justify-center">
-                                <ImageIcon size={16} className="text-zinc-400" />
-                            </div>
-                            <img src={url} alt="Frame" className="absolute inset-0 w-full h-full object-fill z-10 pointer-events-none" />
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onDeleteFrame(url); }}
-                                className="absolute top-1 right-1 z-20 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
-                                title="Delete from Library"
+                    {uploadedFrames.map((asset) => (
+                        <div key={asset.id} className="group flex flex-col gap-1">
+                            <div 
+                                className={`relative w-full aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border-2 cursor-pointer overflow-hidden transition-all ${activeFrame === asset.url ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-transparent hover:border-zinc-300 dark:hover:border-zinc-700'}`}
+                                onClick={() => onSelectFrame(asset.url)}
                             >
-                                <Trash2 size={12} />
-                            </button>
+                                <div className="absolute inset-2 bg-zinc-300 dark:bg-zinc-800 rounded-sm overflow-hidden flex items-center justify-center">
+                                    <ImageIcon size={16} className="text-zinc-400" />
+                                </div>
+                                <img src={asset.url} alt={asset.name} className="absolute inset-0 w-full h-full object-fill z-10 pointer-events-none" />
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); onDeleteFrame(asset.id); }}
+                                    className="absolute top-1 right-1 z-20 p-1.5 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
+                                    title="Delete from Library"
+                                >
+                                    <Trash2 size={12} />
+                                </button>
+                            </div>
+                            {/* Editable Name */}
+                            <EditableLabel 
+                                value={asset.name} 
+                                onSave={(newName) => onRenameFrame(asset.id, newName)}
+                                className="text-[10px] text-zinc-500 dark:text-zinc-400 px-1"
+                            />
                         </div>
                     ))}
                 </div>
@@ -128,7 +214,8 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
                         <Plus className="w-5 h-5 mb-1 text-zinc-400 dark:text-zinc-500 group-hover:text-blue-500" />
                         <p className="text-[10px] text-zinc-500 dark:text-zinc-400 group-hover:text-blue-500 font-medium uppercase text-center hidden md:block">Upload Logo</p>
                     </div>
-                    <input type="file" className="hidden" accept="image/png,image/webp,image/jpeg" onChange={onUploadLogo} />
+                    {/* Added multiple attribute */}
+                    <input type="file" multiple className="hidden" accept="image/png,image/webp,image/jpeg" onChange={onUploadLogo} />
                 </label>
 
                 {/* Batch Action */}
@@ -143,24 +230,32 @@ export const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
                  {/* Logo List */}
                  <div className="grid grid-cols-2 gap-2">
-                    {uploadedLogos.map((url, index) => (
-                        <div 
-                            key={index} 
-                            className="relative group aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer overflow-hidden hover:border-blue-500 hover:shadow-md transition-all flex items-center justify-center p-2"
-                            onClick={() => onAddLogoToPhoto(url)}
-                            title="Click to add to photo"
-                        >
-                            <img src={url} alt="Logo" className="max-w-full max-h-full object-contain" />
-                            
-                            {/* Overlay on hover to indicate action */}
-                            <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-
-                            <button 
-                                onClick={(e) => { e.stopPropagation(); onDeleteLogoAsset(url); }}
-                                className="absolute top-1 right-1 z-20 p-1 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
+                    {uploadedLogos.map((asset) => (
+                        <div key={asset.id} className="group flex flex-col gap-1">
+                            <div 
+                                className="relative aspect-square rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer overflow-hidden hover:border-blue-500 hover:shadow-md transition-all flex items-center justify-center p-2"
+                                onClick={() => onAddLogoToPhoto(asset.url)}
+                                title="Click to add to photo"
                             >
-                                <Trash2 size={10} />
-                            </button>
+                                <img src={asset.url} alt={asset.name} className="max-w-full max-h-full object-contain" />
+                                
+                                {/* Overlay on hover to indicate action */}
+                                <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); onDeleteLogoAsset(asset.id); }}
+                                    className="absolute top-1 right-1 z-20 p-1 bg-red-500/90 text-white rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-600 transition-all shadow-md transform scale-90 hover:scale-100"
+                                >
+                                    <Trash2 size={10} />
+                                </button>
+                            </div>
+                            
+                            {/* Editable Name */}
+                            <EditableLabel 
+                                value={asset.name} 
+                                onSave={(newName) => onRenameLogo(asset.id, newName)}
+                                className="text-[10px] text-zinc-500 dark:text-zinc-400 justify-center"
+                            />
                         </div>
                     ))}
                 </div>

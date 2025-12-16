@@ -7,13 +7,17 @@ interface CanvasViewProps {
   photo: Photo;
   isCropMode: boolean;
   onUpdateCrop: (crop: CropData | null) => void;
+  onCommitCrop: (crop: CropData | null) => void;
   aspectRatio: AspectRatio;
-  onUpdateLogos: (logos: LogoLayer[]) => void;
-  onCommitLogos: () => void;
   onLogosChange: (logos: LogoLayer[]) => void;
 }
 
 type DragMode = 'none' | 'move_crop' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move_logo' | 'scale_logo' | 'rotate_logo';
+
+interface SnapGuides {
+    x: number | null; // Normalized X position to draw line
+    y: number | null; // Normalized Y position to draw line
+}
 
 const getRatioValue = (ar: AspectRatio): number | null => {
   switch (ar) {
@@ -29,9 +33,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     photo, 
     isCropMode, 
     onUpdateCrop, 
+    onCommitCrop,
     aspectRatio,
-    onUpdateLogos,
-    onCommitLogos,
     onLogosChange
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -47,8 +50,12 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   const [layout, setLayout] = useState({ width: 0, height: 0, top: 0, left: 0, scale: 1 });
   
   const [localCrop, setLocalCrop] = useState<CropData | null>(null);
+  // Local state for logos prevents mutating history during drag operations
+  const [localLogos, setLocalLogos] = useState<LogoLayer[]>([]);
+
   const [dragMode, setDragMode] = useState<DragMode>('none');
   const [activeLogoId, setActiveLogoId] = useState<string | null>(null);
+  const [snapGuides, setSnapGuides] = useState<SnapGuides>({ x: null, y: null });
   
   // Drag State including logo specific properties
   const [dragStart, setDragStart] = useState({ 
@@ -61,13 +68,19 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   });
   
   // Computed active logo rotation for display
-  const activeLogo = photo.logos.find(l => l.id === activeLogoId);
+  const activeLogo = localLogos.find(l => l.id === activeLogoId);
   const currentRotationDeg = activeLogo ? Math.round((activeLogo.rotation * 180 / Math.PI) % 360) : 0;
   // Normalize to 0-360 range for display
   const displayRotation = currentRotationDeg < 0 ? currentRotationDeg + 360 : currentRotationDeg;
 
 
-  // 0. Handle Rotation
+  // Sync local logos with photo logos when they change externally (undo/redo/add)
+  useEffect(() => {
+    setLocalLogos(photo.logos);
+  }, [photo.logos]);
+
+
+  // 0. Handle Rotation (Orientation)
   useEffect(() => {
     if (!photo.rotation || photo.rotation === 0) {
         setDisplayUrl(photo.originalUrl);
@@ -121,16 +134,16 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       img.src = photo.frameOverlay;
   }, [photo.frameOverlay]);
 
-  // Load Logo Images
+  // Load Logo Images - Use localLogos to ensure we load images for drag state if needed, though usually URLs don't change during drag
   useEffect(() => {
-      const currentUrls = new Set(photo.logos.map(l => l.url));
+      const currentUrls = new Set(localLogos.map(l => l.url));
       for (const [url] of logoImagesRef.current) {
           if (!currentUrls.has(url)) {
               logoImagesRef.current.delete(url);
           }
       }
 
-      photo.logos.forEach(logo => {
+      localLogos.forEach(logo => {
           if (!logoImagesRef.current.has(logo.url)) {
               const img = new Image();
               img.onload = () => {
@@ -141,7 +154,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
               logoImagesRef.current.set(logo.url, img);
           }
       });
-  }, [photo.logos]);
+  }, [localLogos]);
 
 
   // 1. Initialize Local Crop state
@@ -195,15 +208,17 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     const contW = container.clientWidth;
     const contH = container.clientHeight;
     
-    let srcW, srcH, srcX, srcY;
+    // Determine effective viewing size
+    // In crop mode, we see full image.
+    // In normal mode, we see cropped part.
+    
+    let srcW, srcH;
 
     if (isCropMode) {
-      srcX = 0; srcY = 0;
       srcW = img.width;
       srcH = img.height;
     } else {
       const c = photo.crop || { x: 0, y: 0, width: img.width, height: img.height };
-      srcX = c.x; srcY = c.y;
       srcW = c.width;
       srcH = c.height;
     }
@@ -234,19 +249,54 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
 
-    // Draw Image
-    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, drawW, drawH);
+    // --- Drawing Sequence with Rotation Support ---
     
-    // Apply filters
+    const straightenRad = (photo.straighten || 0) * (Math.PI / 180);
+    
+    // Clear
+    ctx.clearRect(0, 0, drawW, drawH);
+    
+    ctx.save();
+
+    // To handle rotation correctly:
+    // Move origin to center of canvas
+    ctx.translate(drawW / 2, drawH / 2);
+    
+    // Apply Straighten Rotation
+    ctx.rotate(straightenRad);
+    
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (isCropMode) {
+        // Image center is canvas center
+        offsetX = -img.width * scale / 2;
+        offsetY = -img.height * scale / 2;
+    } else {
+        const c = photo.crop || { x: 0, y: 0, width: img.width, height: img.height };
+        // We are at center of crop. We need to find top-left of image.
+        const cropCx = c.x + c.width / 2;
+        const cropCy = c.y + c.height / 2;
+        
+        offsetX = -cropCx * scale;
+        offsetY = -cropCy * scale;
+    }
+
+    // Draw Image
+    ctx.drawImage(img, 0, 0, img.width, img.height, offsetX, offsetY, img.width * scale, img.height * scale);
+    
+    ctx.restore();
+
+    // 2. Apply Filters (on the visible result)
     applyImageFilters(ctx, drawW, drawH, photo.adjustments);
     
-    // Apply Frame
+    // 3. Apply Frame (Frames usually sit on top of the 'result')
     if (frameImgRef.current) {
         ctx.drawImage(frameImgRef.current, 0, 0, drawW, drawH);
     }
 
-    // Apply Logos
-    photo.logos.forEach(logo => {
+    // 4. Apply Logos (Use Local Logos)
+    localLogos.forEach(logo => {
         const logoImg = logoImagesRef.current.get(logo.url);
         if (logoImg && logoImg.complete) {
             const minDim = Math.min(drawW, drawH);
@@ -314,7 +364,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
         }
     });
     
-  }, [photo.adjustments, photo.crop, photo.logos, isCropMode, frameLoaded, activeLogoId]);
+  }, [photo.adjustments, photo.crop, localLogos, photo.straighten, isCropMode, frameLoaded, activeLogoId]);
 
   useEffect(() => {
     renderCanvas();
@@ -344,8 +394,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
 
   const getLogoInteraction = (x: number, y: number): { logo: LogoLayer, type: 'body' | 'resize' | 'rotate' } | null => {
       // Loop reverse to hit top-most first
-      for (let i = photo.logos.length - 1; i >= 0; i--) {
-          const logo = photo.logos[i];
+      for (let i = localLogos.length - 1; i >= 0; i--) {
+          const logo = localLogos[i];
           const logoImg = logoImagesRef.current.get(logo.url);
           if (!logoImg) continue;
 
@@ -411,9 +461,19 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Check Crop Mode Interaction (Simplified hit detection for mode switching)
+    // Check Crop Mode Interaction (Allow clicking anywhere to drag image in crop mode)
     if (isCropMode && localCrop) {
-         // Pass to crop handlers handled by overlay... 
+         setDragMode('move_crop');
+         setDragStart({
+             x: e.clientX,
+             y: e.clientY,
+             cropX: localCrop.x,
+             cropY: localCrop.y,
+             cropW: localCrop.width,
+             cropH: localCrop.height,
+             logoX: 0, logoY: 0, logoScale: 0, logoRotation: 0, centerX: 0, centerY: 0
+         });
+         (e.target as HTMLElement).setPointerCapture(e.pointerId);
          return; 
     }
 
@@ -457,78 +517,113 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     e.preventDefault();
 
     if ((dragMode === 'move_logo' || dragMode === 'scale_logo' || dragMode === 'rotate_logo') && activeLogoId) {
+        // ... (Logo logic remains same)
         const dx = (e.clientX - dragStart.x);
         const dy = (e.clientY - dragStart.y);
 
-        const updatedLogos = photo.logos.map(l => {
+        // Update LOCAL logos (not global state)
+        const updatedLogos = localLogos.map(l => {
             if (l.id === activeLogoId) {
-                // MOVE
                 if (dragMode === 'move_logo') {
-                    const deltaX = dx / layout.width;
-                    const deltaY = dy / layout.height;
-                    return {
-                        ...l,
-                        x: dragStart.logoX + deltaX,
-                        y: dragStart.logoY + deltaY
-                    };
+                    let newX = dragStart.logoX + (dx / layout.width);
+                    let newY = dragStart.logoY + (dy / layout.height);
+                    
+                    // --- Snapping & Containment Logic ---
+                    const logoImg = logoImagesRef.current.get(l.url);
+                    const aspect = logoImg ? logoImg.width / logoImg.height : 1;
+                    const minDim = Math.min(layout.width, layout.height);
+                    const renderH = minDim * l.scale;
+                    const renderW = renderH * aspect;
+                    
+                    // Half dimensions in normalized 0-1 coordinate space
+                    const normHalfW = (renderW / 2) / layout.width;
+                    const normHalfH = (renderH / 2) / layout.height;
+                    
+                    // Snap Threshold (e.g., 12 pixels converted to normalized space)
+                    const snapPx = 12;
+                    const snapThreshX = snapPx / layout.width;
+                    const snapThreshY = snapPx / layout.height;
+
+                    let snappedX = false;
+                    let snappedY = false;
+
+                    // 1. Center Snap
+                    if (Math.abs(newX - 0.5) < snapThreshX) { newX = 0.5; snappedX = true; }
+                    if (Math.abs(newY - 0.5) < snapThreshY) { newY = 0.5; snappedY = true; }
+
+                    // 2. Edge Snap (Snap inner edge to canvas edge)
+                    // Left
+                    if (!snappedX && Math.abs((newX - normHalfW) - 0) < snapThreshX) { newX = normHalfW; snappedX = true; }
+                    // Right
+                    if (!snappedX && Math.abs((newX + normHalfW) - 1) < snapThreshX) { newX = 1 - normHalfW; snappedX = true; }
+                    // Top
+                    if (!snappedY && Math.abs((newY - normHalfH) - 0) < snapThreshY) { newY = normHalfH; snappedY = true; }
+                    // Bottom
+                    if (!snappedY && Math.abs((newY + normHalfH) - 1) < snapThreshY) { newY = 1 - normHalfH; snappedY = true; }
+
+                    // Update Guides State
+                    setSnapGuides({
+                        x: snappedX ? newX : null,
+                        y: snappedY ? newY : null
+                    });
+
+                    // 3. Containment (Clamp center so logo doesn't leave canvas fully)
+                    // We allow edges to touch, but center must be within bounds such that at least half the logo is visible?
+                    // Request said "avoid spilling out". So we force the edges to be inside [0, 1] if possible.
+                    // Clamp X to [normHalfW, 1-normHalfW]
+                    newX = Math.max(normHalfW, Math.min(newX, 1 - normHalfW));
+                    newY = Math.max(normHalfH, Math.min(newY, 1 - normHalfH));
+
+                    return { ...l, x: newX, y: newY };
                 }
-                
-                // ROTATE
                 if (dragMode === 'rotate_logo') {
                     const rect = canvasRef.current?.getBoundingClientRect();
                     if (!rect) return l;
                     const mx = e.clientX - rect.left;
                     const my = e.clientY - rect.top;
-                    
                     const angle = Math.atan2(my - dragStart.centerY, mx - dragStart.centerX);
-                    
-                    return {
-                        ...l,
-                        rotation: angle + Math.PI / 2
-                    };
+                    return { ...l, rotation: angle + Math.PI / 2 };
                 }
-
-                // SCALE
                 if (dragMode === 'scale_logo') {
                      const rect = canvasRef.current?.getBoundingClientRect();
                      if (!rect) return l;
                      const mx = e.clientX - rect.left;
                      const my = e.clientY - rect.top;
-                     
-                     // Current distance from center
                      const currentDist = Math.sqrt(Math.pow(mx - dragStart.centerX, 2) + Math.pow(my - dragStart.centerY, 2));
-                     
                      const minDim = Math.min(layout.width, layout.height);
                      const logoImg = logoImagesRef.current.get(l.url);
                      const aspect = logoImg ? logoImg.width / logoImg.height : 1;
-                     
                      const initialH = minDim * dragStart.logoScale;
                      const initialW = initialH * aspect;
                      const initialHandleDist = Math.sqrt(Math.pow(initialW/2, 2) + Math.pow(initialH/2, 2));
-
                      if (initialHandleDist === 0) return l;
-                     
                      const scaleFactor = currentDist / initialHandleDist;
                      const newScale = dragStart.logoScale * scaleFactor;
-
-                     return {
-                         ...l,
-                         scale: Math.max(0.02, newScale) // Min size limit
-                     };
+                     return { ...l, scale: Math.max(0.02, newScale) };
                 }
             }
             return l;
         });
-        
-        onUpdateLogos(updatedLogos);
+        setLocalLogos(updatedLogos);
+    }
+    
+    // Add crop logic here to support dragging from canvas
+    if (dragMode === 'move_crop' && localCrop) {
+       // Reusing logic from handleCropPointerMove but we need to unify
+       handleCropPointerMove(e);
     }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (dragMode.includes('_logo')) {
         setDragMode('none');
+        setSnapGuides({ x: null, y: null }); // Clear guides
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-        onCommitLogos();
+        // Commit changes to history only on release
+        onLogosChange(localLogos);
+    } else if (dragMode === 'move_crop') {
+        // Also handle crop up here if initiated from canvas
+        handleCropPointerUp(e);
     }
   };
 
@@ -537,29 +632,32 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   const handleBringToFront = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!activeLogoId) return;
-    const currentLogos = [...photo.logos];
+    const currentLogos = [...localLogos];
     const index = currentLogos.findIndex(l => l.id === activeLogoId);
     if (index === -1 || index === currentLogos.length - 1) return;
     const [item] = currentLogos.splice(index, 1);
     currentLogos.push(item);
+    setLocalLogos(currentLogos);
     onLogosChange(currentLogos);
   };
 
   const handleSendToBack = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!activeLogoId) return;
-    const currentLogos = [...photo.logos];
+    const currentLogos = [...localLogos];
     const index = currentLogos.findIndex(l => l.id === activeLogoId);
     if (index === -1 || index === 0) return;
     const [item] = currentLogos.splice(index, 1);
     currentLogos.unshift(item);
+    setLocalLogos(currentLogos);
     onLogosChange(currentLogos);
   };
 
   const handleDeleteActiveLogo = (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!activeLogoId) return;
-      const currentLogos = photo.logos.filter(l => l.id !== activeLogoId);
+      const currentLogos = localLogos.filter(l => l.id !== activeLogoId);
+      setLocalLogos(currentLogos);
       onLogosChange(currentLogos);
       setActiveLogoId(null);
   };
@@ -583,7 +681,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   };
   
   const handleCropPointerMove = (e: React.PointerEvent) => {
-      if (!localCrop || !imgRef.current || !dragMode.includes('crop') && !['nw','ne','sw','se','n','s','e','w'].includes(dragMode)) return;
+      if (!localCrop || !imgRef.current || (!dragMode.includes('crop') && !['nw','ne','sw','se','n','s','e','w'].includes(dragMode))) return;
       
       const dx = (e.clientX - dragStart.x) / layout.scale;
       const dy = (e.clientY - dragStart.y) / layout.scale;
@@ -594,6 +692,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       const ratio = getRatioValue(aspectRatio);
 
       if (dragMode === 'move_crop') { 
+        // Standard Move: Moving the crop rect follows the mouse cursor
         x += dx;
         y += dy;
         x = Math.max(0, Math.min(x, imgW - w));
@@ -624,14 +723,18 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
         if (w < minSize) w = minSize;
         if (h < minSize) h = minSize;
       }
-      setLocalCrop({ x, y, width: w, height: h });
+      
+      const newCrop = { x, y, width: w, height: h };
+      setLocalCrop(newCrop);
+      // Call live update so header info updates
+      onUpdateCrop(newCrop);
   };
   
   const handleCropPointerUp = (e: React.PointerEvent) => {
        if (dragMode !== 'none' && !dragMode.includes('_logo')) {
         setDragMode('none');
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-        onUpdateCrop(localCrop);
+        onCommitCrop(localCrop);
       }
   };
 
@@ -701,17 +804,34 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
             onPointerUp={handlePointerUp}
         />
 
+        {/* Snap Guides Visuals */}
+        {!isCropMode && (
+            <>
+                {snapGuides.x !== null && (
+                     <div 
+                        className="absolute top-0 bottom-0 w-px bg-pink-500 z-50 pointer-events-none shadow-[0_0_2px_rgba(0,0,0,0.5)]" 
+                        style={{ left: snapGuides.x * layout.width }} 
+                     />
+                )}
+                {snapGuides.y !== null && (
+                     <div 
+                        className="absolute left-0 right-0 h-px bg-pink-500 z-50 pointer-events-none shadow-[0_0_2px_rgba(0,0,0,0.5)]" 
+                        style={{ top: snapGuides.y * layout.height }} 
+                     />
+                )}
+            </>
+        )}
+
         {isCropMode && localCrop && (
             <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
                 {/* Visual Overlay: Shadow outside the crop area */}
                 <div
-                    className="absolute border border-white/90 bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.65)]"
+                    className={`absolute border border-white/90 bg-transparent shadow-[0_0_0_9999px_rgba(0,0,0,0.65)] ${dragMode === 'move_crop' ? 'cursor-grabbing' : 'cursor-grab'}`}
                     style={{
                         left: toStyle(localCrop.x),
                         top: toStyle(localCrop.y),
                         width: toStyle(localCrop.width),
                         height: toStyle(localCrop.height),
-                        cursor: 'move',
                         pointerEvents: 'all'
                     }}
                     onPointerDown={(e) => handleCropPointerDown(e, 'move_crop')}

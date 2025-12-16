@@ -29,34 +29,83 @@ export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, classNa
         if (!baseImg.complete) return;
         if (frameImg && !frameImg.complete) return;
         
-        // 1. Setup Canvas Dimensions (match thumbnail natural size)
-        // We set canvas size to match the image aspect ratio
-        // For thumbnail purposes, we can keep it relatively small but high enough quality
-        const thumbW = 150; 
-        const ratio = baseImg.width / baseImg.height;
-        const thumbH = thumbW / ratio;
+        // 1. Calculate effective dimensions (Orientation)
+        // photo.width/height are the full original dimensions
+        const naturalW = photo.width; 
+        const naturalH = photo.height;
+        const rot = photo.rotation || 0;
+        const isVert = rot % 180 !== 0;
 
-        canvas.width = thumbW;
-        canvas.height = thumbH;
+        const effW = isVert ? naturalH : naturalW;
+        const effH = isVert ? naturalW : naturalH;
+        
+        // 2. Determine Viewport (Crop)
+        // If crop exists, use it. Else use full effective size.
+        const crop = photo.crop || { x: 0, y: 0, width: effW, height: effH };
+        
+        // 3. Set Canvas Resolution
+        // We cap the max dimension to save memory/perf, e.g. 300px for thumbnails.
+        // This ensures the thumbnail isn't huge but maintains the aspect ratio of the crop.
+        const thumbMax = 300; 
+        const renderScale = Math.min(thumbMax / crop.width, thumbMax / crop.height);
+        
+        const canvasW = Math.ceil(crop.width * renderScale);
+        const canvasH = Math.ceil(crop.height * renderScale);
 
-        // 2. Draw Base Image
-        ctx.clearRect(0, 0, thumbW, thumbH);
-        ctx.drawImage(baseImg, 0, 0, thumbW, thumbH);
-
-        // 3. Draw Frame (on top of base, unaffected by filters usually, but here filters are CSS on container)
-        // Actually, frame should be under CSS filters? 
-        // In CanvasView, frame is drawn via ctx, then filters applied via pixel manipulation.
-        // In Thumbnail, we apply CSS filters to the canvas. 
-        // So drawing frame here means CSS filters apply to frame too. This matches CanvasView logic.
-        if (frameImg) {
-            ctx.drawImage(frameImg, 0, 0, thumbW, thumbH);
+        // Update canvas size if changed
+        if (canvas.width !== canvasW || canvas.height !== canvasH) {
+            canvas.width = canvasW;
+            canvas.height = canvasH;
         }
 
-        // 4. Draw Logos
+        // Clear
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 4. Draw Base Image with Transforms
+        // We want to simulate looking through the "Crop Window" at the "Rotated Image".
+        ctx.save();
+        ctx.scale(renderScale, renderScale); // Map Logical Pixels to Canvas Pixels
+        
+        // Move "Camera" Center to Center of output canvas (Logical Space)
+        ctx.translate(crop.width / 2, crop.height / 2);
+
+        // Apply Straighten Rotation
+        const straightenRad = (photo.straighten || 0) * (Math.PI / 180);
+        ctx.rotate(straightenRad);
+
+        // Find Center of Crop in Effective Space
+        const cropCx = crop.x + crop.width / 2;
+        const cropCy = crop.y + crop.height / 2;
+
+        // Translate so that Crop Center aligns with current origin (0,0)
+        // effectively moving the world so crop center is at camera center
+        ctx.translate(-cropCx, -cropCy);
+
+        // Now we are in "Effective Space" top-left origin.
+        // Move to Image Center to apply orientation rotation
+        ctx.translate(effW / 2, effH / 2);
+        ctx.rotate(rot * Math.PI / 180);
+
+        // Draw Base Image Centered
+        // Note: baseImg.width/height are the small thumbnail blob sizes (~300px).
+        // photo.width/height are the full original sizes (~4000px).
+        // We draw the small thumbnail stretched to the Logical dimensions so it aligns with the coordinate system.
+        // This might look pixelated for deep crops, which is acceptable for thumbnails.
+        ctx.drawImage(baseImg, -naturalW / 2, -naturalH / 2, naturalW, naturalH);
+        
+        ctx.restore();
+
+        // 5. Draw Overlays (Frame & Logos)
+        // Overlays are applied relative to the Final Cropped View
+        
+        if (frameImg) {
+            ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+        }
+
         logoImgs.forEach(({ layer, img }) => {
             if (!img.complete) return;
             
-            const minDim = Math.min(thumbW, thumbH);
+            const minDim = Math.min(canvas.width, canvas.height);
             const w = img.width;
             const h = img.height;
             const aspect = w / h;
@@ -64,8 +113,8 @@ export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, classNa
             let renderH = minDim * layer.scale;
             let renderW = renderH * aspect;
 
-            const cx = layer.x * thumbW;
-            const cy = layer.y * thumbH;
+            const cx = layer.x * canvas.width;
+            const cy = layer.y * canvas.height;
 
             ctx.save();
             ctx.translate(cx, cy);
@@ -88,22 +137,20 @@ export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, classNa
     // Load Logos
     photo.logos.forEach(layer => {
         const img = new Image();
-        img.onload = () => {
-             // Re-draw when any logo loads
-             draw();
-        };
+        img.onload = draw;
         img.src = layer.url;
         logoImgs.push({ layer, img });
     });
+    
+    // Trigger initial draw if images already cached/loaded
+    if (baseImg.complete) draw();
 
     return () => {
         isMounted = false;
     };
-  }, [photo.thumbnailUrl, photo.frameOverlay, photo.logos, photo.rotation]); 
-  // Note: rotation prop on photo is just metadata (0,90..), visually handling rotation in thumb is complex 
-  // because we'd need to rotate the canvas. For now, we display the unrotated thumb content (frames/logos relative to original).
+  }, [photo.thumbnailUrl, photo.frameOverlay, photo.logos, photo.rotation, photo.crop, photo.straighten, photo.width, photo.height]); 
 
-  // We use CSS styles for the color adjustments
+  // Apply CSS filters to the canvas to preview adjustments
   return (
     <canvas 
         ref={canvasRef} 
@@ -112,7 +159,7 @@ export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, classNa
             ...getThumbnailStyles(photo.adjustments),
             width: '100%',
             height: '100%',
-            objectFit: 'cover'
+            objectFit: 'contain' 
         }}
     />
   );

@@ -1,7 +1,8 @@
+
 import React from 'react';
 // @ts-ignore
 import heic2any from 'heic2any';
-import { Adjustments } from '../types';
+import { Adjustments, Photo } from '../types';
 
 /**
  * clamp value between min and max
@@ -311,4 +312,149 @@ export const calculateReadableRatio = (w: number, h: number): string => {
   
   // Fallback to decimal ratio for things like 1.91:1
   return ratio >= 1 ? `${ratio.toFixed(2)}:1` : `1:${(1/ratio).toFixed(2)}`;
+};
+
+/**
+ * Generates a final export blob for a photo, applying all edits.
+ * This mimics the CanvasView rendering logic but off-screen and for full resolution.
+ */
+export const generateExportBlob = async (
+    photo: Photo, 
+    format: 'jpeg' | 'png', 
+    quality: number
+): Promise<Blob | null> => {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // 1. Load Base Image
+            const img = new Image();
+            img.src = photo.originalUrl;
+            await new Promise((r, e) => { img.onload = r; img.onerror = e; });
+
+            // 2. Load Overlays (Frame & Logos)
+            const frameImg = photo.frameOverlay ? new Image() : null;
+            if (frameImg) {
+                frameImg.src = photo.frameOverlay!;
+                await new Promise((r) => { frameImg.onload = r; });
+            }
+
+            const logoImgs = await Promise.all(photo.logos.map(async (l) => {
+                const li = new Image();
+                li.src = l.url;
+                await new Promise((r) => { li.onload = r; });
+                return { layer: l, img: li };
+            }));
+
+            // 3. Determine Canvas Size & Rotation
+            // Need to handle Orientation Rotation FIRST
+            let baseW = img.width;
+            let baseH = img.height;
+            const orientationRot = photo.rotation || 0;
+            if (orientationRot % 180 !== 0) {
+                baseW = img.height;
+                baseH = img.width;
+            }
+
+            // 4. Setup Canvas
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error("No context");
+
+            // Define viewport based on crop or full image
+            let viewW = baseW;
+            let viewH = baseH;
+            
+            if (photo.crop) {
+                viewW = photo.crop.width;
+                viewH = photo.crop.height;
+            }
+
+            canvas.width = viewW;
+            canvas.height = viewH;
+
+            // 5. Drawing - Coordinate Transformation
+            // We want to simulate a camera moving to the crop rect + straightening
+            
+            // Save state before applying camera transforms
+            ctx.save();
+            
+            // Move origin to center of final canvas
+            ctx.translate(viewW / 2, viewH / 2);
+
+            // Apply Straighten Rotation
+            const straightenRad = (photo.straighten || 0) * (Math.PI / 180);
+            ctx.rotate(straightenRad);
+
+            // Calculate offset of the Image Center relative to the Crop Center
+            let offsetX = 0;
+            let offsetY = 0;
+
+            if (photo.crop) {
+                // Crop Center relative to Top-Left of unrotated image space
+                const cropCx = photo.crop.x + photo.crop.width / 2;
+                const cropCy = photo.crop.y + photo.crop.height / 2;
+                
+                offsetX = -cropCx;
+                offsetY = -cropCy;
+            } else {
+                // Image Center is at BaseW/2, BaseH/2. 
+                // We want Image Center at (0,0)
+                offsetX = -baseW / 2;
+                offsetY = -baseH / 2;
+            }
+
+            // --- Draw Image with Orientation Rotation ---
+            ctx.save();
+            ctx.translate(offsetX, offsetY); // Move to top-left of image relative to crop center
+            
+            // Now handle the base orientation (0, 90, 180, 270)
+            // Move to center of the image source rect
+            ctx.translate(baseW/2, baseH/2); 
+            ctx.rotate((orientationRot * Math.PI) / 180);
+            
+            // Draw original image centered on its own axis
+            ctx.drawImage(img, -img.width/2, -img.height/2);
+            ctx.restore();
+
+            // Restore context to Identity (0,0) so Filters, Frame and Logos are drawn relative to canvas Top-Left
+            ctx.restore();
+
+            // 6. Apply Filters
+            // Filters use getImageData so they ignore transforms, but we want the context clean anyway
+            applyImageFilters(ctx, viewW, viewH, photo.adjustments);
+
+            // 7. Draw Frame
+            if (frameImg) {
+                ctx.drawImage(frameImg, 0, 0, viewW, viewH);
+            }
+
+            // 8. Draw Logos
+            logoImgs.forEach(({ layer, img: li }) => {
+                const minDim = Math.min(viewW, viewH);
+                const aspect = li.width / li.height;
+                let renderH = minDim * layer.scale;
+                let renderW = renderH * aspect;
+                
+                // Logo coordinates are 0-1 relative to the VIEW (Crop)
+                const cx = layer.x * viewW;
+                const cy = layer.y * viewH;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(layer.rotation);
+                ctx.drawImage(li, -renderW/2, -renderH/2, renderW, renderH);
+                ctx.restore();
+            });
+
+            // 9. Export
+            const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+            canvas.toBlob((blob) => {
+                if (blob) resolve(blob);
+                else reject(new Error("Blob failed"));
+            }, mimeType, quality);
+
+        } catch (err) {
+            console.error("Export generation failed", err);
+            reject(err);
+        }
+    });
 };

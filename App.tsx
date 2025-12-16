@@ -1,16 +1,18 @@
 import React, { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Sidebar } from './components/Sidebar';
-import { LeftSidebar } from './components/LeftSidebar';
 import { Filmstrip } from './components/Filmstrip';
 import { CanvasView } from './components/CanvasView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { ProcessingModal } from './components/ProcessingModal';
-import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData, LogoLayer } from './types';
-import { createThumbnail, isHeic, convertHeicToJpeg, formatBytes, calculateReadableRatio } from './utils/processor';
+import { ExportModal, ExportConfig } from './components/ExportModal';
+import { Photo, Adjustments, DEFAULT_ADJUSTMENTS, AspectRatio, CropData, LogoLayer, Asset } from './types';
+import { createThumbnail, isHeic, convertHeicToJpeg, formatBytes, calculateReadableRatio, generateExportBlob } from './utils/processor';
 import { Download, Image as ImageIcon, Sparkles, Undo2, Redo2, UploadCloud, Moon, Sun } from 'lucide-react';
 import { useHistory } from './hooks/useHistory';
 import { useTheme } from './hooks/useTheme';
+// @ts-ignore
+import JSZip from 'jszip';
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
@@ -29,9 +31,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
-  // Assets State (Session based)
-  const [uploadedFrames, setUploadedFrames] = useState<string[]>([]);
-  const [uploadedLogos, setUploadedLogos] = useState<string[]>([]);
+  // Assets State (Session based) - Now managed here but passed to Right Sidebar
+  const [uploadedFrames, setUploadedFrames] = useState<Asset[]>([]);
+  const [uploadedLogos, setUploadedLogos] = useState<Asset[]>([]);
 
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -44,6 +46,9 @@ export default function App() {
   // Crop state
   const [isCropMode, setIsCropMode] = useState(false);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('Free');
+
+  // Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const selectedPhoto = photos.find(p => p.id === selectedId) || null;
 
@@ -124,6 +129,7 @@ export default function App() {
           height: thumb.height,
           sizeInBytes: file.size, // Capture file size
           rotation: 0,
+          straighten: 0, // Init straighten
           adjustments: { ...DEFAULT_ADJUSTMENTS },
           frameOverlay: null,
           logos: [],
@@ -199,23 +205,51 @@ export default function App() {
     pushHistory(newPhotos);
     if (selectedId === id) setSelectedId(null);
   };
+  
+  const handleRenamePhoto = (id: string, newName: string) => {
+    const newPhotos = photos.map(p => p.id === id ? { ...p, name: newName } : p);
+    pushHistory(newPhotos);
+  };
 
   // --- Frame Handlers ---
   const handleUploadFrame = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.files || e.target.files.length === 0) return;
-      const file = e.target.files[0];
-      const url = URL.createObjectURL(file);
-      setUploadedFrames(prev => [url, ...prev]);
-      addToast('success', 'Frame added to library');
+      // Convert FileList to Array manually to ensure type safety
+      const files: File[] = [];
+      for (let i = 0; i < e.target.files.length; i++) {
+          const item = e.target.files.item(i);
+          if (item) files.push(item);
+      }
+      
+      const newFrames: Asset[] = files.map(file => ({
+          id: uuidv4(),
+          url: URL.createObjectURL(file),
+          name: file.name
+      }));
+
+      setUploadedFrames(prev => [...newFrames, ...prev]);
+      addToast('success', `${files.length} frame(s) added`);
       e.target.value = '';
   };
 
-  const handleDeleteFrame = (urlToDelete: string) => {
-      setUploadedFrames(prev => prev.filter(url => url !== urlToDelete));
+  const handleDeleteFrame = (idToDelete: string) => {
+      setUploadedFrames(prev => prev.filter(f => f.id !== idToDelete));
+  };
+  
+  const handleRenameFrame = (id: string, newName: string) => {
+      setUploadedFrames(prev => prev.map(f => f.id === id ? { ...f, name: newName } : f));
   };
 
   const handleSelectFrame = (url: string | null) => {
       if (!selectedId) return;
+      
+      const currentPhoto = photos.find(p => p.id === selectedId);
+      // Prevent adding a new frame if one is already there, unless we are removing (url is null)
+      if (url && currentPhoto?.frameOverlay && currentPhoto.frameOverlay !== url) {
+          addToast('error', 'Only one frame allowed. Remove the current frame first.');
+          return;
+      }
+
       const newPhotos = photos.map(p => {
           if (p.id === selectedId) {
               return { ...p, frameOverlay: url };
@@ -228,8 +262,6 @@ export default function App() {
   const handleBatchFrame = async () => {
     if (!selectedPhoto) return;
     const frame = selectedPhoto.frameOverlay;
-    // Even if frame is null (removed), we might want to sync removal, but usually 'Apply Frame' implies applying a specific one.
-    // If active frame is null, we can treat it as 'Remove Frame from All'
     
     await runBatchOperation(frame ? 'Applying Frame...' : 'Removing Frame...', (p) => ({
       ...p,
@@ -241,15 +273,30 @@ export default function App() {
   // --- Logo Handlers ---
   const handleUploadLogo = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.files || e.target.files.length === 0) return;
-      const file = e.target.files[0];
-      const url = URL.createObjectURL(file);
-      setUploadedLogos(prev => [url, ...prev]);
-      addToast('success', 'Logo added to library');
+      // Convert FileList to Array manually to ensure type safety
+      const files: File[] = [];
+      for (let i = 0; i < e.target.files.length; i++) {
+          const item = e.target.files.item(i);
+          if (item) files.push(item);
+      }
+      
+      const newLogos: Asset[] = files.map(file => ({
+          id: uuidv4(),
+          url: URL.createObjectURL(file),
+          name: file.name
+      }));
+
+      setUploadedLogos(prev => [...newLogos, ...prev]);
+      addToast('success', `${files.length} logo(s) added`);
       e.target.value = '';
   };
 
-  const handleDeleteLogoAsset = (urlToDelete: string) => {
-      setUploadedLogos(prev => prev.filter(url => url !== urlToDelete));
+  const handleDeleteLogoAsset = (idToDelete: string) => {
+      setUploadedLogos(prev => prev.filter(l => l.id !== idToDelete));
+  };
+
+  const handleRenameLogo = (id: string, newName: string) => {
+      setUploadedLogos(prev => prev.map(l => l.id === id ? { ...l, name: newName } : l));
   };
 
   const handleAddLogoToPhoto = (url: string) => {
@@ -272,18 +319,7 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
-  // Updated purely for real-time dragging visual feedback
-  const handleUpdateLogos = (logos: LogoLayer[]) => {
-      if (!selectedId) return;
-      setPhotos(photos.map(p => {
-          if (p.id === selectedId) {
-              return { ...p, logos };
-          }
-          return p;
-      }));
-  };
-
-  // Updates logos AND pushes to history (for reordering/deleting)
+  // Update with push (for actions like delete/reorder/drop)
   const handleLogosChange = (logos: LogoLayer[]) => {
       if (!selectedId) return;
       const newPhotos = photos.map(p => {
@@ -295,17 +331,11 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
-  const handleCommitLogos = () => {
-      // Push current state to history after drag ends
-      pushHistory(photos);
-  };
-
   const handleBatchLogo = async () => {
     if (!selectedPhoto) return;
     const sourceLogos = selectedPhoto.logos;
 
     await runBatchOperation('Syncing Logos...', (p) => {
-        // Must generate unique IDs for each logo on each photo to prevent reference issues
         const newLogos = sourceLogos.map(l => ({
             ...l,
             id: uuidv4()
@@ -367,7 +397,8 @@ export default function App() {
           frameOverlay: null,
           logos: [],
           crop: null, 
-          rotation: 0 
+          rotation: 0,
+          straighten: 0
       } : p
     );
     pushHistory(newPhotos);
@@ -383,7 +414,7 @@ export default function App() {
               return { 
                   ...p, 
                   rotation: (current - 90 + 360) % 360,
-                  crop: null // Reset crop on rotate to avoid alignment issues
+                  crop: null 
               };
           }
           return p;
@@ -406,6 +437,21 @@ export default function App() {
           return p;
       });
       pushHistory(newPhotos);
+  };
+
+  // New Straighten Handler
+  const handleStraightenChange = (val: number) => {
+      if (!selectedId) return;
+      setPhotos(photos.map(p => {
+          if (p.id === selectedId) {
+              return { ...p, straighten: val };
+          }
+          return p;
+      }));
+  };
+
+  const handleStraightenCommit = () => {
+      pushHistory(photos);
   };
 
   // Batch Handlers
@@ -480,7 +526,8 @@ export default function App() {
 
         return {
             ...p,
-            crop: { x, y, width: cropW, height: cropH }
+            crop: { x, y, width: cropW, height: cropH },
+            // Batch crop also resets manual straightening for simplicity unless we want to sync it
         };
     });
     
@@ -489,7 +536,6 @@ export default function App() {
   
   const handleUpdateCrop = (crop: CropData | null) => {
       if (!selectedId) return;
-      // We update state immediately for smooth UI...
       const newPhotos = photos.map(p => 
         p.id === selectedId ? { ...p, crop } : p
       );
@@ -504,13 +550,64 @@ export default function App() {
       pushHistory(newPhotos);
   };
 
-  const handleDownload = () => {
-      addToast('success', 'Export started... (Demo)');
+  // --- Export Logic ---
+
+  const handleOpenExport = () => {
+      setIsExportModalOpen(true);
+  };
+
+  const handleFinalExport = async (config: ExportConfig) => {
+      const photosToExport = photos.filter(p => config.selectedIds.includes(p.id));
+      if (photosToExport.length === 0) return;
+
+      setIsProcessing(true);
+      setProcessingMessage('Generating images...');
+      setProgress(0);
+
+      try {
+          const zip = new JSZip();
+          const folder = zip.folder(config.prefix) || zip;
+
+          for (let i = 0; i < photosToExport.length; i++) {
+              const photo = photosToExport[i];
+              setProcessingMessage(`Processing ${i + 1}/${photosToExport.length}: ${photo.name}`);
+              
+              const blob = await generateExportBlob(photo, config.format, config.quality);
+              if (blob) {
+                  // Pad index with zeros (e.g. 001, 002)
+                  const indexStr = (i + 1).toString().padStart(3, '0');
+                  const ext = config.format === 'jpeg' ? 'jpg' : 'png';
+                  const fileName = `${config.prefix}_${indexStr}.${ext}`;
+                  
+                  folder.file(fileName, blob);
+              }
+              setProgress(((i + 1) / photosToExport.length) * 100);
+          }
+
+          setProcessingMessage('Zipping files...');
+          const zipContent = await zip.generateAsync({ type: 'blob' });
+          
+          // Trigger download
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(zipContent);
+          link.download = `${config.prefix}_export.zip`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          addToast('success', 'Download started!');
+
+      } catch (err) {
+          console.error(err);
+          addToast('error', 'Export failed. See console.');
+      } finally {
+          setIsProcessing(false);
+      }
   };
 
   return (
     <div 
-      className="flex flex-col h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-white overflow-hidden selection:bg-blue-500 selection:text-white transition-colors duration-300"
+      className="flex flex-col h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-white overflow-hidden selection:bg-blue-500 selection:text-white transition-colors duration-300 font-sans"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -518,6 +615,14 @@ export default function App() {
       <ToastContainer toasts={toasts} removeToast={removeToast} />
       <ProcessingModal isOpen={isProcessing} message={processingMessage} progress={progress} />
       
+      <ExportModal 
+          isOpen={isExportModalOpen} 
+          onClose={() => setIsExportModalOpen(false)} 
+          photos={photos} 
+          selectedId={selectedId} 
+          onExport={handleFinalExport} 
+      />
+
       {/* Drag Drop Overlay */}
       {isDragging && (
           <div className="fixed inset-0 z-50 bg-blue-600/20 backdrop-blur-sm border-4 border-blue-500 border-dashed m-4 rounded-xl flex items-center justify-center pointer-events-none">
@@ -528,7 +633,7 @@ export default function App() {
           </div>
       )}
 
-      {/* Top Bar */}
+      {/* Header */}
       <header className="h-12 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -541,7 +646,7 @@ export default function App() {
                 <button 
                     onClick={undo} 
                     disabled={!canUndo}
-                    className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
+                    className="p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
                     title="Undo"
                 >
                     <Undo2 size={16} />
@@ -549,7 +654,7 @@ export default function App() {
                 <button 
                     onClick={redo} 
                     disabled={!canRedo}
-                    className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
+                    className="p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all"
                     title="Redo"
                 >
                     <Redo2 size={16} />
@@ -558,24 +663,6 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-           {selectedPhoto && (
-             <span className="text-xs text-zinc-500 font-mono hidden md:block">
-              {(() => {
-                  let w, h;
-                  if (selectedPhoto.crop) {
-                      w = Math.round(selectedPhoto.crop.width);
-                      h = Math.round(selectedPhoto.crop.height);
-                  } else {
-                      const rot = selectedPhoto.rotation || 0;
-                      const isVert = (rot / 90) % 2 !== 0;
-                      w = isVert ? selectedPhoto.height : selectedPhoto.width;
-                      h = isVert ? selectedPhoto.width : selectedPhoto.height;
-                  }
-                  return `${w}x${h} • ${calculateReadableRatio(w, h)} • ${formatBytes(selectedPhoto.sizeInBytes)}`;
-              })()}
-             </span>
-           )}
-
             <button
                 onClick={toggleTheme}
                 className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors"
@@ -585,67 +672,54 @@ export default function App() {
             </button>
 
            <button 
-             onClick={handleDownload}
-             disabled={!selectedPhoto}
-             className="bg-zinc-100 dark:bg-zinc-100 text-black px-3 py-1.5 rounded text-xs font-semibold hover:bg-zinc-200 dark:hover:bg-zinc-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors border border-zinc-200 dark:border-transparent"
+             onClick={handleOpenExport}
+             disabled={photos.length === 0}
+             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors shadow-sm"
            >
              <Download size={14} /> Export
            </button>
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* Main Layout: Canvas Left | Sidebar Right */}
       <div className="flex-1 flex overflow-hidden">
         
-        {/* Left Sidebar (Frames & Logos) */}
-        <LeftSidebar 
-            uploadedFrames={uploadedFrames}
-            activeFrame={selectedPhoto?.frameOverlay || null}
-            onUploadFrame={handleUploadFrame}
-            onSelectFrame={handleSelectFrame}
-            onDeleteFrame={handleDeleteFrame}
-            onBatchFrame={handleBatchFrame}
-            uploadedLogos={uploadedLogos}
-            hasLogos={(selectedPhoto?.logos.length || 0) > 0}
-            onUploadLogo={handleUploadLogo}
-            onAddLogoToPhoto={handleAddLogoToPhoto}
-            onDeleteLogoAsset={handleDeleteLogoAsset}
-            onBatchLogo={handleBatchLogo}
-        />
+        {/* Left Area: Canvas + Filmstrip */}
+        <div className="flex-1 flex flex-col relative bg-zinc-100 dark:bg-zinc-950/50 transition-colors duration-300 min-w-0">
+          <main className="flex-1 relative overflow-hidden flex flex-col">
+            {selectedPhoto ? (
+                <CanvasView 
+                photo={selectedPhoto} 
+                isCropMode={isCropMode}
+                onUpdateCrop={handleUpdateCrop} 
+                onCommitCrop={handleCropCommit}
+                aspectRatio={aspectRatio}
+                onLogosChange={handleLogosChange}
+                />
+            ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">
+                <div className="w-20 h-20 rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center mb-6 shadow-sm dark:shadow-none">
+                    <ImageIcon size={40} className="opacity-50" />
+                </div>
+                <h3 className="text-lg font-medium text-zinc-400 mb-2">No photo selected</h3>
+                <p className="text-sm text-zinc-500">Drag & drop photos here or use the add button below</p>
+                </div>
+            )}
+          </main>
 
-        {/* Center Canvas Area */}
-        <main className="flex-1 flex flex-col relative bg-zinc-100 dark:bg-zinc-950/50 transition-colors duration-300">
-          {selectedPhoto ? (
-            <CanvasView 
-              photo={selectedPhoto} 
-              isCropMode={isCropMode}
-              onUpdateCrop={handleCropCommit} 
-              aspectRatio={aspectRatio}
-              onUpdateLogos={handleUpdateLogos}
-              onCommitLogos={handleCommitLogos}
-              onLogosChange={handleLogosChange}
+          {/* Filmstrip Overlay */}
+          <div className="shrink-0 z-20">
+             <Filmstrip 
+                photos={photos} 
+                selectedId={selectedId} 
+                onSelect={setSelectedId} 
+                onAdd={handleAddPhotos}
+                onRemove={handleRemovePhoto}
             />
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">
-               <div className="w-20 h-20 rounded-3xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center mb-6 shadow-sm dark:shadow-none">
-                  <ImageIcon size={40} className="opacity-50" />
-               </div>
-               <h3 className="text-lg font-medium text-zinc-400 mb-2">No photo selected</h3>
-               <p className="text-sm text-zinc-500">Drag & drop photos here or use the add button below</p>
-            </div>
-          )}
+          </div>
+        </div>
 
-          {/* Bottom Filmstrip */}
-          <Filmstrip 
-            photos={photos} 
-            selectedId={selectedId} 
-            onSelect={setSelectedId} 
-            onAdd={handleAddPhotos}
-            onRemove={handleRemovePhoto}
-          />
-        </main>
-
-        {/* Right Sidebar */}
+        {/* Unified Right Sidebar */}
         <Sidebar 
           photo={selectedPhoto}
           adjustments={selectedPhoto?.adjustments || DEFAULT_ADJUSTMENTS}
@@ -662,6 +736,23 @@ export default function App() {
           onBatchApply={handleBatchApply}
           onBatchCrop={handleBatchCrop}
           onBatchAuto={handleBatchAutoAdjust}
+          onStraightenChange={handleStraightenChange}
+          onStraightenCommit={handleStraightenCommit}
+          // Asset Props passed down
+          uploadedFrames={uploadedFrames}
+          uploadedLogos={uploadedLogos}
+          onUploadFrame={handleUploadFrame}
+          onSelectFrame={handleSelectFrame}
+          onDeleteFrame={handleDeleteFrame}
+          onRenameFrame={handleRenameFrame}
+          onBatchFrame={handleBatchFrame}
+          onUploadLogo={handleUploadLogo}
+          onAddLogoToPhoto={handleAddLogoToPhoto}
+          onDeleteLogoAsset={handleDeleteLogoAsset}
+          onRenameLogo={handleRenameLogo}
+          onBatchLogo={handleBatchLogo}
+          // Photo Props
+          onRenamePhoto={handleRenamePhoto}
         />
       </div>
     </div>

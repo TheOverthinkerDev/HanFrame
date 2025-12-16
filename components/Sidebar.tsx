@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
-import { Adjustments, Photo, AspectRatio } from '../types';
+import { Adjustments, Photo, AspectRatio, Asset } from '../types';
 import { Slider } from './Slider';
-import { Wand2, RotateCcw, RotateCw, Crop, Layers, Scissors, Zap, ChevronDown, ChevronRight, Sun, Palette, Layout } from 'lucide-react';
+import { formatBytes, calculateReadableRatio } from '../utils/processor';
+import { 
+    Wand2, RotateCcw, RotateCw, Crop, Layers, Scissors, Zap, 
+    Sun, Palette, Layout, Sliders, Image as ImageIcon, Plus, 
+    Trash2, Copy, X, Pencil, Frame, Stamp 
+} from 'lucide-react';
 
+// --- Types ---
 interface SidebarProps {
   photo: Photo | null;
   adjustments: Adjustments;
@@ -19,249 +25,395 @@ interface SidebarProps {
   onBatchApply: () => void;
   onBatchCrop: () => void;
   onBatchAuto: () => void;
+  onStraightenChange: (val: number) => void;
+  onStraightenCommit: () => void;
+
+  // Asset Props (Previously in LeftSidebar)
+  uploadedFrames: Asset[];
+  uploadedLogos: Asset[];
+  onUploadFrame: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onSelectFrame: (url: string | null) => void;
+  onDeleteFrame: (id: string) => void;
+  onRenameFrame: (id: string, newName: string) => void;
+  onBatchFrame: () => void;
+  onUploadLogo: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAddLogoToPhoto: (url: string) => void;
+  onDeleteLogoAsset: (id: string) => void;
+  onRenameLogo: (id: string, newName: string) => void;
+  onBatchLogo: () => void;
+  onRenamePhoto: (id: string, newName: string) => void;
 }
 
-const SidebarSection: React.FC<{ 
-    title: string; 
-    icon: React.ReactNode; 
-    children: React.ReactNode; 
-    defaultOpen?: boolean;
-    rightAction?: React.ReactNode;
-}> = ({ title, icon, children, defaultOpen = false, rightAction }) => {
-    const [isOpen, setIsOpen] = useState(defaultOpen);
+type Mode = 'tune' | 'crop' | 'layers';
+
+// --- Shared Components ---
+
+const EditableLabel: React.FC<{ 
+    value: string; 
+    onSave: (val: string) => void; 
+    className?: string 
+}> = ({ value, onSave, className }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    
+    const lastDotIndex = value.lastIndexOf('.');
+    const hasExtension = lastDotIndex !== -1;
+    const extension = hasExtension ? value.substring(lastDotIndex) : ''; 
+    const currentBaseName = hasExtension ? value.substring(0, lastDotIndex) : value;
+
+    const [tempName, setTempName] = useState(currentBaseName);
+
+    React.useEffect(() => {
+        if (!isEditing) {
+            setTempName(currentBaseName);
+        }
+    }, [currentBaseName, isEditing]);
+
+    const handleSave = () => {
+        setIsEditing(false);
+        const finalName = tempName.trim();
+        if (finalName && finalName !== currentBaseName) {
+            onSave(finalName + extension);
+        } else {
+            setTempName(currentBaseName);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') handleSave();
+        if (e.key === 'Escape') {
+            setIsEditing(false);
+            setTempName(currentBaseName);
+        }
+    };
+
+    if (isEditing) {
+        return (
+            <div className={`flex items-center w-full ${className}`} onClick={(e) => e.stopPropagation()}>
+                <input 
+                    autoFocus
+                    type="text" 
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    onBlur={handleSave}
+                    onKeyDown={handleKeyDown}
+                    className="min-w-0 flex-1 bg-white dark:bg-zinc-800 border border-blue-500 rounded px-1 py-0.5 text-xs focus:outline-none text-zinc-900 dark:text-zinc-100"
+                />
+                <span className="text-zinc-400 dark:text-zinc-500 text-[10px] ml-0.5 shrink-0 select-none">{extension}</span>
+            </div>
+        );
+    }
 
     return (
-        <div className="border-b border-zinc-200 dark:border-zinc-800 transition-colors">
-            <div 
-                className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors select-none"
-                onClick={() => setIsOpen(!isOpen)}
-            >
-                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                    {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300 transition-colors">{icon} {title}</span>
-                </div>
-                {rightAction && <div onClick={e => e.stopPropagation()}>{rightAction}</div>}
-            </div>
-            
-            {isOpen && (
-                <div className="p-4 bg-zinc-50/50 dark:bg-zinc-950/50 animate-in slide-in-from-top-2 fade-in duration-200">
-                    {children}
-                </div>
-            )}
+        <div 
+            className={`group/label flex items-center gap-1 cursor-text w-full overflow-hidden ${className}`}
+            onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+            title="Click to rename"
+        >
+            <span className="truncate">{value}</span>
+            <Pencil size={10} className="opacity-0 group-hover/label:opacity-50 shrink-0 text-zinc-400" />
         </div>
     );
 };
 
-export const Sidebar: React.FC<SidebarProps> = ({ 
-  photo, 
-  adjustments, 
-  onChange,
-  onCommit,
-  onRotateLeft,
-  onRotateRight,
-  onAuto, 
-  onReset,
-  isCropMode,
-  toggleCropMode,
-  currentAspectRatio,
-  setAspectRatio,
-  onBatchApply,
-  onBatchCrop,
-  onBatchAuto
-}) => {
-  if (!photo) {
+// --- Main Sidebar Component ---
+
+export const Sidebar: React.FC<SidebarProps> = (props) => {
+  const [activeTab, setActiveTab] = useState<Mode>('tune');
+
+  // Helper to ensure Crop Mode is toggle correctly based on tab
+  const handleTabChange = (tab: Mode) => {
+      setActiveTab(tab);
+      if (tab === 'crop' && !props.isCropMode) {
+          props.toggleCropMode();
+      } else if (tab !== 'crop' && props.isCropMode) {
+          props.toggleCropMode();
+      }
+  };
+
+  if (!props.photo) {
     return (
       <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6 flex items-center justify-center text-zinc-500 transition-colors">
-        <p>No photo selected</p>
+        <div className="text-center">
+            <Sliders size={48} className="mx-auto mb-4 opacity-20" />
+            <p className="text-sm">Select a photo to edit</p>
+        </div>
       </div>
     );
   }
 
+  // Calculate effective dimensions based on rotation for display
+  const rot = props.photo.rotation || 0;
+  const isPortraitRot = rot % 180 !== 0;
+  const effW = isPortraitRot ? props.photo.height : props.photo.width;
+  const effH = isPortraitRot ? props.photo.width : props.photo.height;
+  const ratioStr = calculateReadableRatio(effW, effH);
+
   return (
     <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex flex-col h-full overflow-hidden transition-colors duration-300">
       
-      {/* Top Header */}
-      <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center bg-white dark:bg-zinc-950 sticky top-0 z-10 shrink-0 transition-colors">
-        <h2 className="font-semibold text-zinc-900 dark:text-zinc-100">Editor</h2>
-        <button 
-            onClick={onAuto}
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide"
-            title="Auto adjust current photo"
-        >
-            <Wand2 size={12} /> Auto
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-
-        {/* BATCH ACTIONS */}
-        <SidebarSection title="Batch Actions" icon={<Layers size={14} />} defaultOpen={false}>
-            <div className="grid grid-cols-1 gap-2">
-                <button 
-                    onClick={onBatchAuto}
-                    className="w-full py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 flex items-center justify-center gap-2 border border-zinc-200 dark:border-zinc-800 transition-colors"
-                >
-                    <Zap size={14} className="text-yellow-500" /> Auto Adjust All
-                </button>
-                
-                <div className="flex gap-2">
-                    <button 
-                        onClick={onBatchApply}
-                        className="flex-1 py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors"
-                        title="Copy current settings to all"
-                    >
-                        Sync Settings
-                    </button>
-                    <button 
-                         onClick={onBatchCrop}
-                         className="flex-1 py-2 px-3 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors flex items-center justify-center gap-1"
-                         title="Apply selected aspect ratio to all"
-                     >
-                         <Scissors size={12} /> Crop All
-                     </button>
-                </div>
-            </div>
-        </SidebarSection>
-        
-        {/* CROP & ROTATE */}
-        <SidebarSection title="Crop & Rotate" icon={<Layout size={14} />} defaultOpen={isCropMode}>
-            <div className="space-y-4">
-                <div className="flex gap-2">
-                    <button 
-                    onClick={toggleCropMode}
-                    className={`flex-1 py-2 px-3 rounded text-sm font-medium border flex items-center justify-center gap-2 transition-all ${isCropMode ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
-                    >
-                    <Crop size={14} /> {isCropMode ? 'Done' : 'Crop'}
-                    </button>
-                    <button 
-                    onClick={onRotateLeft}
-                    className="py-2 px-3 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                    title="Rotate Left"
-                    >
-                    <RotateCcw size={16} />
-                    </button>
-                    <button 
-                    onClick={onRotateRight}
-                    className="py-2 px-3 rounded bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                    title="Rotate Right"
-                    >
-                    <RotateCw size={16} />
-                    </button>
-                </div>
-                
-                {isCropMode && (
-                    <div className="grid grid-cols-3 gap-2 animate-in fade-in slide-in-from-top-1">
-                    {['Free', '1:1', '16:9', '4:3', '3:2'].map((ratio) => (
-                        <button
-                        key={ratio}
-                        onClick={() => setAspectRatio(ratio as AspectRatio)}
-                        className={`text-xs py-1.5 rounded border transition-colors ${currentAspectRatio === ratio ? 'bg-zinc-800 border-zinc-600 text-white' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
-                        >
-                        {ratio}
-                        </button>
-                    ))}
-                    </div>
+      {/* Photo Info Header */}
+      <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/30 dark:bg-zinc-900/30">
+        <div className="flex items-start justify-between gap-2">
+           <div className="min-w-0 flex-1">
+             <EditableLabel 
+                value={props.photo.name} 
+                onSave={(n) => props.onRenamePhoto(props.photo!.id, n)} 
+                className="font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate"
+             />
+             <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-1 font-mono">
+                <span className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-600 dark:text-zinc-400" title="Resolution & Aspect Ratio">
+                    {effW} × {effH} • {ratioStr}
+                </span>
+                {props.photo.sizeInBytes && (
+                    <span title="File Size">{formatBytes(props.photo.sizeInBytes)}</span>
                 )}
-                {isCropMode && currentAspectRatio === 'Free' && (
-                    <p className="text-[10px] text-zinc-500 italic text-center">Select a fixed ratio to enable batch crop.</p>
-                )}
+             </div>
            </div>
-        </SidebarSection>
-        
-        {/* LIGHT */}
-        <SidebarSection 
-            title="Light" 
-            icon={<Sun size={14} />} 
-            defaultOpen={true}
-            rightAction={
-                <button onClick={(e) => {
-                    e.stopPropagation();
-                    onChange('exposure', 0);
-                    onChange('contrast', 0);
-                    onCommit();
-                  }} className="text-[10px] text-zinc-500 hover:text-zinc-800 dark:text-zinc-600 dark:hover:text-zinc-400 px-2 py-1 transition-colors">
-                    Reset
-                </button>
-            }
-        >
-          <Slider 
-            label="Exposure" 
-            value={adjustments.exposure} 
-            onChange={(v) => onChange('exposure', v)} 
-            onAfterChange={onCommit}
-            onReset={() => { onChange('exposure', 0); onCommit(); }}
-          />
-          <Slider 
-            label="Contrast" 
-            value={adjustments.contrast} 
-            onChange={(v) => onChange('contrast', v)}
-            onAfterChange={onCommit}
-            onReset={() => { onChange('contrast', 0); onCommit(); }}
-          />
-        </SidebarSection>
-
-        {/* COLOR */}
-        <SidebarSection 
-            title="Color" 
-            icon={<Palette size={14} />} 
-            defaultOpen={true}
-            rightAction={
-                <button onClick={(e) => {
-                    e.stopPropagation();
-                    onChange('temperature', 0);
-                    onChange('tint', 0);
-                    onChange('vibrance', 0);
-                    onChange('saturation', 0);
-                    onCommit();
-                  }} className="text-[10px] text-zinc-500 hover:text-zinc-800 dark:text-zinc-600 dark:hover:text-zinc-400 px-2 py-1 transition-colors">
-                    Reset
-                </button>
-            }
-        >
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-zinc-900/40 p-3 rounded-lg border border-zinc-200 dark:border-zinc-800/50 shadow-sm dark:shadow-none transition-colors">
-               <Slider 
-                label="Temp" 
-                value={adjustments.temperature} 
-                onChange={(v) => onChange('temperature', v)}
-                onAfterChange={onCommit}
-                onReset={() => { onChange('temperature', 0); onCommit(); }}
-              />
-              <div className="w-full h-1 mt-[-10px] rounded mb-4 bg-gradient-to-r from-blue-900 via-zinc-400 dark:via-zinc-700 to-yellow-900 opacity-50 pointer-events-none" />
-
-              <Slider 
-                label="Tint" 
-                value={adjustments.tint} 
-                onChange={(v) => onChange('tint', v)}
-                onAfterChange={onCommit}
-                onReset={() => { onChange('tint', 0); onCommit(); }}
-              />
-               <div className="w-full h-1 mt-[-10px] rounded bg-gradient-to-r from-green-900 via-zinc-400 dark:via-zinc-700 to-fuchsia-900 opacity-50 pointer-events-none" />
-            </div>
-
-            <Slider 
-              label="Vibrance" 
-              value={adjustments.vibrance} 
-              onChange={(v) => onChange('vibrance', v)}
-              onAfterChange={onCommit}
-              onReset={() => { onChange('vibrance', 0); onCommit(); }}
-            />
-            <Slider 
-              label="Saturation" 
-              value={adjustments.saturation} 
-              onChange={(v) => onChange('saturation', v)}
-              onAfterChange={onCommit}
-              onReset={() => { onChange('saturation', 0); onCommit(); }}
-            />
-          </div>
-        </SidebarSection>
-
+        </div>
       </div>
 
-      <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shrink-0 transition-colors">
-        <button onClick={onReset} className="w-full py-2 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 text-xs hover:bg-zinc-100 dark:hover:text-white dark:hover:border-zinc-700 transition-colors">
-          Reset All Settings
-        </button>
+      {/* Navigation Tabs */}
+      <div className="flex shrink-0 border-b border-zinc-200 dark:border-zinc-800">
+          <button 
+            onClick={() => handleTabChange('tune')}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'tune' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+          >
+              <Sliders size={18} /> Tune
+              {activeTab === 'tune' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
+          </button>
+          <button 
+            onClick={() => handleTabChange('crop')}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'crop' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+          >
+              <Crop size={18} /> Crop
+              {activeTab === 'crop' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
+          </button>
+          <button 
+            onClick={() => handleTabChange('layers')}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'layers' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+          >
+              <Layers size={18} /> Layers
+              {activeTab === 'layers' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
+          </button>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-5">
+        
+        {/* === TUNE TAB === */}
+        {activeTab === 'tune' && (
+            <div className="space-y-8 animate-in slide-in-from-right-4 fade-in duration-300">
+                {/* Auto & Batch */}
+                <div className="grid grid-cols-2 gap-2">
+                    <button 
+                        onClick={props.onAuto}
+                        className="py-2 px-3 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded border border-blue-100 dark:border-blue-900/50 flex items-center justify-center gap-2 text-xs font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+                    >
+                        <Wand2 size={14} /> Auto Enhance
+                    </button>
+                    <button 
+                        onClick={props.onBatchApply}
+                        className="py-2 px-3 bg-zinc-50 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 rounded border border-zinc-200 dark:border-zinc-800 flex items-center justify-center gap-2 text-xs font-semibold hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                        title="Copy these settings to all photos"
+                    >
+                        <Copy size={14} /> Sync All
+                    </button>
+                </div>
+
+                {/* Light Section */}
+                <div>
+                    <h3 className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-4 flex items-center gap-2">
+                        <Sun size={14} /> Light
+                    </h3>
+                    <Slider label="Exposure" value={props.adjustments.exposure} onChange={(v) => props.onChange('exposure', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('exposure', 0); props.onCommit(); }} />
+                    <Slider label="Contrast" value={props.adjustments.contrast} onChange={(v) => props.onChange('contrast', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('contrast', 0); props.onCommit(); }} />
+                </div>
+
+                {/* Color Section */}
+                <div>
+                    <h3 className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-4 flex items-center gap-2">
+                        <Palette size={14} /> Color
+                    </h3>
+                     <div className="bg-zinc-50/50 dark:bg-zinc-900/50 p-3 rounded-lg border border-zinc-200 dark:border-zinc-800/50 space-y-4 mb-4">
+                        <Slider label="Temp" value={props.adjustments.temperature} onChange={(v) => props.onChange('temperature', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('temperature', 0); props.onCommit(); }} />
+                        <div className="w-full h-1 mt-[-12px] rounded mb-1 bg-gradient-to-r from-blue-900 via-zinc-400 dark:via-zinc-700 to-yellow-900 opacity-40 pointer-events-none" />
+                        
+                        <Slider label="Tint" value={props.adjustments.tint} onChange={(v) => props.onChange('tint', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('tint', 0); props.onCommit(); }} />
+                        <div className="w-full h-1 mt-[-12px] rounded bg-gradient-to-r from-green-900 via-zinc-400 dark:via-zinc-700 to-fuchsia-900 opacity-40 pointer-events-none" />
+                    </div>
+
+                    <Slider label="Vibrance" value={props.adjustments.vibrance} onChange={(v) => props.onChange('vibrance', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('vibrance', 0); props.onCommit(); }} />
+                    <Slider label="Saturation" value={props.adjustments.saturation} onChange={(v) => props.onChange('saturation', v)} onAfterChange={props.onCommit} onReset={() => { props.onChange('saturation', 0); props.onCommit(); }} />
+                </div>
+                
+                 <button onClick={props.onReset} className="w-full py-3 text-xs text-zinc-400 hover:text-red-500 transition-colors border-t border-zinc-100 dark:border-zinc-800/50 mt-4">
+                    Reset All Adjustments
+                </button>
+            </div>
+        )}
+
+        {/* === CROP TAB === */}
+        {activeTab === 'crop' && (
+            <div className="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
+                
+                {/* Rotation Controls */}
+                <div className="bg-zinc-50 dark:bg-zinc-900 p-2 rounded-lg flex justify-between border border-zinc-200 dark:border-zinc-800">
+                     <button onClick={props.onRotateLeft} className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded transition-colors text-zinc-600 dark:text-zinc-400" title="Rotate Left"><RotateCcw size={18} /></button>
+                     <div className="w-px bg-zinc-200 dark:bg-zinc-800 mx-1" />
+                     <button onClick={props.onRotateRight} className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded transition-colors text-zinc-600 dark:text-zinc-400" title="Rotate Right"><RotateCw size={18} /></button>
+                </div>
+
+                {/* Straighten */}
+                 <div>
+                    <label className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-2 block">Straighten</label>
+                    <Slider 
+                        label=""
+                        value={props.photo.straighten || 0}
+                        min={-45}
+                        max={45}
+                        onChange={props.onStraightenChange}
+                        onAfterChange={props.onStraightenCommit}
+                        onReset={() => { props.onStraightenChange(0); props.onStraightenCommit(); }}
+                    />
+                 </div>
+
+                {/* Aspect Ratios */}
+                <div>
+                     <label className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-3 block">Aspect Ratio</label>
+                     <div className="grid grid-cols-3 gap-2">
+                        {['Free', '1:1', '16:9', '4:3', '3:2'].map((ratio) => (
+                            <button
+                            key={ratio}
+                            onClick={() => props.setAspectRatio(ratio as AspectRatio)}
+                            className={`text-xs py-2 rounded-md border font-medium transition-all ${props.currentAspectRatio === ratio ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-300 bg-white dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}
+                            >
+                            {ratio}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Batch Actions */}
+                 <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800">
+                    <button 
+                        onClick={props.onBatchCrop}
+                        disabled={props.currentAspectRatio === 'Free'}
+                        className="w-full py-2 px-3 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                        <Scissors size={14} /> Crop All Photos
+                    </button>
+                    {props.currentAspectRatio === 'Free' && <p className="text-[10px] text-zinc-400 mt-2 text-center">Select a preset ratio to batch crop.</p>}
+                 </div>
+            </div>
+        )}
+
+        {/* === LAYERS TAB (Merged Assets) === */}
+        {activeTab === 'layers' && (
+             <div className="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
+                
+                {/* --- FRAMES SUB-SECTION --- */}
+                <div>
+                    <h3 className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-3 flex items-center gap-2">
+                        <Frame size={14} /> Frames
+                    </h3>
+                    
+                    {/* Active Frame Info */}
+                    {props.photo.frameOverlay ? (
+                        <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-900/30 flex items-center justify-between">
+                            <span className="text-xs text-blue-700 dark:text-blue-300 font-medium">Frame Applied</span>
+                            <button 
+                                onClick={() => props.onSelectFrame(null)}
+                                className="p-1 hover:bg-red-100 dark:hover:bg-red-900/50 rounded text-red-500 transition-colors"
+                                title="Remove Frame"
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    ) : null}
+
+                    {/* Upload */}
+                    <label className="flex items-center justify-center w-full py-3 mb-3 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900 hover:border-blue-500 dark:hover:border-blue-500 transition-all text-xs text-zinc-500 gap-2">
+                        <Plus size={14} /> Upload Frame
+                        <input type="file" multiple className="hidden" accept="image/png,image/webp" onChange={props.onUploadFrame} />
+                    </label>
+
+                    {/* Grid */}
+                    <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                         {props.uploadedFrames.map((asset) => (
+                             <div key={asset.id} className="group relative">
+                                <div 
+                                    className={`relative aspect-square rounded-md bg-zinc-100 dark:bg-zinc-900 border cursor-pointer overflow-hidden transition-all ${props.photo?.frameOverlay === asset.url ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'}`}
+                                    onClick={() => props.onSelectFrame(asset.url)}
+                                >
+                                    <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); props.onDeleteFrame(asset.id); }}
+                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                </div>
+                                <EditableLabel 
+                                    value={asset.name} 
+                                    onSave={(n) => props.onRenameFrame(asset.id, n)} 
+                                    className="mt-1 text-[9px] text-zinc-500" 
+                                />
+                             </div>
+                         ))}
+                    </div>
+                     {props.photo.frameOverlay && (
+                         <button onClick={props.onBatchFrame} className="w-full mt-2 py-1.5 text-[10px] bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+                            Apply to All Photos
+                        </button>
+                     )}
+                </div>
+                
+                <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
+
+                {/* --- LOGOS SUB-SECTION --- */}
+                <div>
+                     <h3 className="text-xs font-bold uppercase text-zinc-400 dark:text-zinc-500 mb-3 flex items-center gap-2">
+                        <Stamp size={14} /> Logos
+                    </h3>
+
+                    <label className="flex items-center justify-center w-full py-3 mb-3 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900 hover:border-blue-500 dark:hover:border-blue-500 transition-all text-xs text-zinc-500 gap-2">
+                        <Plus size={14} /> Upload Logo
+                        <input type="file" multiple className="hidden" accept="image/png,image/webp,image/jpeg" onChange={props.onUploadLogo} />
+                    </label>
+
+                     <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                         {props.uploadedLogos.map((asset) => (
+                             <div key={asset.id} className="group relative">
+                                <div 
+                                    className="relative aspect-square rounded-md bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 cursor-pointer overflow-hidden hover:border-blue-500 p-1 flex items-center justify-center"
+                                    onClick={() => props.onAddLogoToPhoto(asset.url)}
+                                >
+                                    <img src={asset.url} alt={asset.name} className="max-w-full max-h-full object-contain" />
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); props.onDeleteLogoAsset(asset.id); }}
+                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    >
+                                        <X size={10} />
+                                    </button>
+                                </div>
+                                <EditableLabel 
+                                    value={asset.name} 
+                                    onSave={(n) => props.onRenameLogo(asset.id, n)} 
+                                    className="mt-1 text-[9px] text-zinc-500" 
+                                />
+                             </div>
+                         ))}
+                    </div>
+                    {props.photo.logos.length > 0 && (
+                        <button onClick={props.onBatchLogo} className="w-full mt-2 py-1.5 text-[10px] bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800">
+                            Sync Logos to All
+                        </button>
+                    )}
+                </div>
+
+             </div>
+        )}
+
       </div>
     </div>
   );

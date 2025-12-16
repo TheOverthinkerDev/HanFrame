@@ -1,6 +1,6 @@
 import React from 'react';
 import { Photo } from '../types';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, ImagePlus } from 'lucide-react';
 import { ThumbnailCanvas } from './ThumbnailCanvas';
 
 interface FilmstripProps {
@@ -13,13 +13,14 @@ interface FilmstripProps {
 
 export const Filmstrip: React.FC<FilmstripProps> = ({ photos, selectedId, onSelect, onAdd, onRemove }) => {
   return (
-    <div className="h-32 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800 flex flex-col shrink-0 transition-colors duration-300">
-      <div className="flex-1 flex overflow-x-auto overflow-y-hidden p-2 space-x-2 items-center custom-scrollbar">
+    <div className="h-28 bg-white/90 dark:bg-zinc-950/90 border-t border-zinc-200 dark:border-zinc-800 backdrop-blur-md flex flex-col shrink-0 transition-colors duration-300">
+      
+      {/* Strip Container */}
+      <div className="flex-1 flex overflow-x-auto overflow-y-hidden items-center px-4 gap-3 custom-scrollbar">
         
-        {/* Upload Button */}
-        <label className="shrink-0 w-24 h-24 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 border-dashed rounded-md flex flex-col items-center justify-center cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600 transition-all group">
-          <Plus className="text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 mb-1" size={24} />
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium uppercase tracking-wide group-hover:text-zinc-600 dark:group-hover:text-zinc-300">Add Photos</span>
+        {/* Compact Upload Button */}
+        <label className="shrink-0 w-16 h-16 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-zinc-800 hover:border-blue-400 dark:hover:border-zinc-600 transition-all group shadow-sm">
+          <ImagePlus className="text-zinc-400 dark:text-zinc-500 group-hover:text-blue-500" size={20} />
           {/* Allow all image formats supported by the browser */}
           <input 
             type="file" 
@@ -30,40 +31,41 @@ export const Filmstrip: React.FC<FilmstripProps> = ({ photos, selectedId, onSele
           />
         </label>
 
+        {/* Separator */}
+        <div className="w-px h-10 bg-zinc-200 dark:bg-zinc-800 mx-1 shrink-0" />
+
         {/* Thumbnails */}
         {photos.map((photo) => (
           <div 
             key={photo.id}
             onClick={() => onSelect(photo.id)}
-            className={`relative group shrink-0 w-24 h-24 bg-zinc-100 dark:bg-zinc-900 rounded-md overflow-hidden cursor-pointer border-2 transition-all ${selectedId === photo.id ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-transparent hover:border-zinc-300 dark:hover:border-zinc-600'}`}
+            className={`relative group shrink-0 w-20 h-20 bg-zinc-100 dark:bg-zinc-900 rounded-lg overflow-hidden cursor-pointer border-2 transition-all shadow-sm ${selectedId === photo.id ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md scale-105 z-10' : 'border-transparent opacity-70 hover:opacity-100 hover:border-zinc-300 dark:hover:border-zinc-700'}`}
           >
             {/* Use ThumbnailCanvas instead of img for composite preview */}
             <ThumbnailCanvas photo={photo} />
             
-            {/* Cropped Indicator (Small icon) */}
+            {/* Cropped Indicator */}
             {photo.crop && (
-               <div className="absolute top-1 left-1 bg-black/50 p-0.5 rounded pointer-events-none">
-                   <div className="w-2 h-2 border border-white/80" />
-               </div>
+               <div className="absolute top-1 left-1 w-2 h-2 bg-blue-500 rounded-full shadow-sm pointer-events-none" />
             )}
             
             {/* Remove Button */}
             <button 
               onClick={(e) => onRemove(photo.id, e)}
-              className="absolute top-1 right-1 p-0.5 bg-black/50 rounded-full text-white opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-all z-10"
+              className="absolute top-0.5 right-0.5 p-1 bg-black/60 hover:bg-red-500 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm"
             >
-              <X size={12} />
+              <X size={10} />
             </button>
           </div>
         ))}
         
-        {/* Spacer for right padding */}
+        {/* End Padding */}
         <div className="w-4 shrink-0" />
       </div>
       
-      <div className="h-6 bg-white dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-3 transition-colors">
-        <span className="text-[10px] text-zinc-500">{photos.length} photos</span>
-        <span className="text-[10px] text-zinc-500">Press 'Add Photos' to start</span>
+      {/* Footer Status */}
+      <div className="h-5 bg-zinc-50 dark:bg-black/20 border-t border-zinc-100 dark:border-zinc-800/50 flex items-center justify-between px-3">
+        <span className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider">{photos.length} item{photos.length !== 1 ? 's' : ''}</span>
       </div>
     </div>
   );
