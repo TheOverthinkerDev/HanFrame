@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Photo, CropData, AspectRatio, LogoLayer } from '../types';
 import { applyImageFilters } from '../utils/processor';
+import { applyWebGLFilters } from '../utils/webgl';
 import { Loader2, BringToFront, SendToBack, Trash2 } from 'lucide-react';
 
 interface CanvasViewProps {
@@ -10,6 +11,7 @@ interface CanvasViewProps {
   onCommitCrop: (crop: CropData | null) => void;
   aspectRatio: AspectRatio;
   onLogosChange: (logos: LogoLayer[]) => void;
+  useGPU?: boolean;
 }
 
 type DragMode = 'none' | 'move_crop' | 'nw' | 'ne' | 'sw' | 'se' | 'n' | 's' | 'e' | 'w' | 'move_logo' | 'scale_logo' | 'rotate_logo';
@@ -35,7 +37,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     onUpdateCrop, 
     onCommitCrop,
     aspectRatio,
-    onLogosChange
+    onLogosChange,
+    useGPU = true
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -178,24 +181,50 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
           fCanvas.height = img.height;
       }
       
-      const ctx = fCanvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
-
-      ctx.drawImage(img, 0, 0);
-      applyImageFilters(ctx, img.width, img.height, photo.adjustments);
+      // Determine strategy based on GPU flag
+      if (useGPU) {
+          try {
+             applyWebGLFilters(fCanvas, img, photo.adjustments);
+          } catch (e) {
+              console.error("WebGL Failed, falling back to CPU", e);
+              // Fallback
+              const ctx = fCanvas.getContext('2d', { willReadFrequently: true });
+              if (ctx) {
+                ctx.clearRect(0, 0, fCanvas.width, fCanvas.height);
+                ctx.drawImage(img, 0, 0);
+                applyImageFilters(ctx, img.width, img.height, photo.adjustments);
+              }
+          }
+      } else {
+          const ctx = fCanvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return;
+          // Ensure clear before drawing to avoid overlaps with transparent images
+          ctx.clearRect(0, 0, fCanvas.width, fCanvas.height);
+          ctx.drawImage(img, 0, 0);
+          applyImageFilters(ctx, img.width, img.height, photo.adjustments);
+      }
       
       isFilteredCacheValid.current = true;
-  }, [photo.adjustments]);
+  }, [photo.adjustments, useGPU]);
 
-  // 1. Initialize Local Crop state (Logic moved largely to image onload to ensure dims are ready)
+  // 1. Initialize & Sync Local Crop state
   useEffect(() => {
-      if (isCropMode && imgRef.current && !localCrop) {
-          // If entering crop mode and image is already loaded but no crop set, default to full
-          const initialCrop = photo.crop || { x: 0, y: 0, width: imgRef.current.width, height: imgRef.current.height };
-          setLocalCrop(initialCrop);
-          onUpdateCrop(initialCrop);
+      if (!isCropMode) return;
+
+      // Case A: Initial Load or reset
+      if (imgRef.current && !photo.crop && !localCrop) {
+           const initialCrop = { x: 0, y: 0, width: imgRef.current.width, height: imgRef.current.height };
+           setLocalCrop(initialCrop);
+           // Don't call onUpdateCrop here to avoid initial loop, wait for interaction
+           return;
       }
-  }, [isCropMode, photo.crop]);
+
+      // Case B: Sync from parent (External change like Aspect Ratio or Batch)
+      // Only sync if we are NOT dragging (dragMode === 'none')
+      if (dragMode === 'none' && photo.crop) {
+          setLocalCrop(photo.crop);
+      }
+  }, [isCropMode, photo.crop, dragMode]);
 
   // 2. Handle Aspect Ratio Changes (User interaction)
   useEffect(() => {
@@ -207,7 +236,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
     if (!ratio) return;
 
     applyAspectRatio(ratio, imgRef.current.width, imgRef.current.height, localCrop);
-  }, [aspectRatio, layout.key]); // Added layout.key dep to re-verify when layout stabilizes
+  }, [aspectRatio, layout.key]); 
 
   // Helper to apply aspect ratio logic
   const applyAspectRatio = (ratio: number, imgW: number, imgH: number, currentBaseCrop: CropData) => {
@@ -287,14 +316,21 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
         return newLayout;
     });
 
-    canvas.width = drawW;
-    canvas.height = drawH;
+    // Explicitly set dims to clear canvas
+    if (canvas.width !== drawW || canvas.height !== drawH) {
+        canvas.width = drawW;
+        canvas.height = drawH;
+    } else {
+        // If dims match, clear manually
+        const ctx = canvas.getContext('2d');
+        ctx?.clearRect(0, 0, drawW, drawH);
+    }
+    
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
     const straightenRad = (photo.straighten || 0) * (Math.PI / 180);
     
-    ctx.clearRect(0, 0, drawW, drawH);
     ctx.save();
     ctx.translate(drawW / 2, drawH / 2);
     ctx.rotate(straightenRad);
@@ -386,9 +422,14 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
 
   // Adjustments change effect
   useEffect(() => {
+      // If switching GPU modes, we might need to recreate the canvas or context, 
+      // but for now re-running filter cache update handles drawing to the correct context.
+      // However, converting a 2D canvas to WebGL or vice versa in place is tricky.
+      // Easiest way: re-create the offscreen canvas element if mode switches.
+      filteredCanvasRef.current = document.createElement('canvas');
       updateFilterCache();
       renderCanvas();
-  }, [updateFilterCache, renderCanvas]);
+  }, [updateFilterCache, renderCanvas, useGPU]); // Add useGPU dependency
 
   // Image Load Effect
   useEffect(() => {
@@ -434,7 +475,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       // Update state
       if (isCropMode) {
           setLocalCrop(newCrop);
-          onUpdateCrop(newCrop);
+          // If we calculated a new default crop, sync it up
+          if (!photo.crop) onUpdateCrop(newCrop);
       }
 
       updateFilterCache();
@@ -489,126 +531,22 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       return null;
   };
 
-  // Defined BEFORE handlePointerMove
-  const handleCropPointerMove = (e: React.PointerEvent) => {
-      if (!localCrop || !imgRef.current || (!dragMode.includes('crop') && !['nw','ne','sw','se','n','s','e','w', 'move_crop'].includes(dragMode))) return;
-      
-      const dx = (e.clientX - dragStart.x) / layout.scale;
-      const dy = (e.clientY - dragStart.y) / layout.scale;
-
-      let { cropX: x, cropY: y, cropW: w, cropH: h } = dragStart;
-      const imgW = imgRef.current.width;
-      const imgH = imgRef.current.height;
-      const ratio = getRatioValue(aspectRatio);
-
-      if (dragMode === 'move_crop') { 
-        x += dx;
-        y += dy;
-        x = Math.max(0, Math.min(x, imgW - w));
-        y = Math.max(0, Math.min(y, imgH - h));
-      } else {
-        if (dragMode.includes('w')) { w -= dx; x += dx; }
-        if (dragMode.includes('e')) { w += dx; }
-        if (dragMode.includes('n')) { h -= dy; y += dy; }
-        if (dragMode.includes('s')) { h += dy; }
-
-        const minSize = 50 / layout.scale;
-        
-        if (ratio) {
-           if (dragMode.includes('e') || dragMode.includes('w')) {
-             h = w / ratio;
-             if (dragMode.includes('n')) y = dragStart.cropY + dragStart.cropH - h;
-           } else if (dragMode.includes('n') || dragMode.includes('s')) {
-             w = h * ratio;
-             if (dragMode.includes('w')) x = dragStart.cropX + dragStart.cropW - w;
-           }
-        }
-        
-        if (x < 0) { w += x; x = 0; }
-        if (x + w > imgW) { w = imgW - x; }
-        if (y < 0) { h += y; y = 0; }
-        if (y + h > imgH) { h = imgH - y; }
-
-        if (w < minSize) w = minSize;
-        if (h < minSize) h = minSize;
-      }
-      
-      const newCrop = { x, y, width: w, height: h };
-      setLocalCrop(newCrop);
-      onUpdateCrop(newCrop);
-  };
-  
-  const handleCropPointerUp = (e: React.PointerEvent) => {
-       if (dragMode !== 'none' && !dragMode.includes('_logo')) {
-        setDragMode('none');
-        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-        onCommitCrop(localCrop);
-      }
-  };
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (!layout.scale) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    if (isCropMode && localCrop) {
-         setDragMode('move_crop');
-         setDragStart({
-             x: e.clientX,
-             y: e.clientY,
-             cropX: localCrop.x,
-             cropY: localCrop.y,
-             cropW: localCrop.width,
-             cropH: localCrop.height,
-             logoX: 0, logoY: 0, logoScale: 0, logoRotation: 0, centerX: 0, centerY: 0
-         });
-         (e.target as HTMLElement).setPointerCapture(e.pointerId);
-         return; 
-    }
-
-    if (!isCropMode) {
-        const hit = getLogoInteraction(mouseX, mouseY);
-        
-        if (hit) {
-            setActiveLogoId(hit.logo.id);
-            const mode = hit.type === 'rotate' ? 'rotate_logo' : hit.type === 'resize' ? 'scale_logo' : 'move_logo';
-            setDragMode(mode);
-            
-            const drawW = layout.width;
-            const drawH = layout.height;
-            const cx = hit.logo.x * drawW;
-            const cy = hit.logo.y * drawH;
-
-            setDragStart({
-                ...dragStart,
-                x: e.clientX,
-                y: e.clientY,
-                logoX: hit.logo.x,
-                logoY: hit.logo.y,
-                logoScale: hit.logo.scale,
-                logoRotation: hit.logo.rotation,
-                centerX: cx,
-                centerY: cy
-            });
-            (e.target as HTMLElement).setPointerCapture(e.pointerId);
-            return;
-        } else {
-            setActiveLogoId(null);
-        }
-    }
-  };
-
   const handlePointerMove = (e: React.PointerEvent) => {
     if (dragMode === 'none') return;
+    
+    // SAFETY: If buttons are not pressed (e.g. lost focus and released outside), stop drag
+    if (e.buttons === 0) {
+        setDragMode('none');
+        if (containerRef.current && containerRef.current.hasPointerCapture(e.pointerId)) {
+            containerRef.current.releasePointerCapture(e.pointerId);
+        }
+        return;
+    }
+
     e.preventDefault();
 
     if ((dragMode === 'move_logo' || dragMode === 'scale_logo' || dragMode === 'rotate_logo') && activeLogoId) {
+        // Logo logic...
         const dx = (e.clientX - dragStart.x);
         const dy = (e.clientY - dragStart.y);
 
@@ -680,30 +618,84 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
             return l;
         });
         setLocalLogos(updatedLogos);
+        return;
     }
     
-    // Call unified handler, now safe because it is defined above
+    // Crop Logic
     if (dragMode === 'move_crop' || dragMode.length <= 2) {
-       handleCropPointerMove(e);
+      if (!localCrop || !imgRef.current) return;
+      
+      const dx = (e.clientX - dragStart.x) / layout.scale;
+      const dy = (e.clientY - dragStart.y) / layout.scale;
+
+      let { cropX: x, cropY: y, cropW: w, cropH: h } = dragStart;
+      const imgW = imgRef.current.width;
+      const imgH = imgRef.current.height;
+      const ratio = getRatioValue(aspectRatio);
+
+      if (dragMode === 'move_crop') { 
+        x += dx;
+        y += dy;
+        x = Math.max(0, Math.min(x, imgW - w));
+        y = Math.max(0, Math.min(y, imgH - h));
+      } else {
+        if (dragMode.includes('w')) { w -= dx; x += dx; }
+        if (dragMode.includes('e')) { w += dx; }
+        if (dragMode.includes('n')) { h -= dy; y += dy; }
+        if (dragMode.includes('s')) { h += dy; }
+
+        const minSize = 50 / layout.scale;
+        
+        if (ratio) {
+           if (dragMode.includes('e') || dragMode.includes('w')) {
+             h = w / ratio;
+             if (dragMode.includes('n')) y = dragStart.cropY + dragStart.cropH - h;
+           } else if (dragMode.includes('n') || dragMode.includes('s')) {
+             w = h * ratio;
+             if (dragMode.includes('w')) x = dragStart.cropX + dragStart.cropW - w;
+           }
+        }
+        
+        if (x < 0) { w += x; x = 0; }
+        if (x + w > imgW) { w = imgW - x; }
+        if (y < 0) { h += y; y = 0; }
+        if (y + h > imgH) { h = imgH - y; }
+
+        if (w < minSize) w = minSize;
+        if (h < minSize) h = minSize;
+      }
+      
+      const newCrop = { x, y, width: w, height: h };
+      setLocalCrop(newCrop);
+      // OPTIMIZATION: Removed onUpdateCrop(newCrop) to prevent parent re-renders and lag
     }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    if (dragMode.includes('_logo')) {
-        setDragMode('none');
-        setSnapGuides({ x: null, y: null }); 
-        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-        onLogosChange(localLogos);
-    } else if (dragMode === 'move_crop' || (dragMode !== 'none' && !dragMode.includes('_logo'))) {
-        handleCropPointerUp(e);
+    if (dragMode === 'none') return;
+
+    if (containerRef.current && containerRef.current.hasPointerCapture(e.pointerId)) {
+        containerRef.current.releasePointerCapture(e.pointerId);
     }
+
+    if (dragMode.includes('_logo')) {
+        setSnapGuides({ x: null, y: null }); 
+        onLogosChange(localLogos);
+    } else {
+        onCommitCrop(localCrop);
+    }
+    setDragMode('none');
   };
 
+  // Triggered when clicking a specific crop handle or the crop box itself
   const handleCropPointerDown = (e: React.PointerEvent, mode: DragMode) => {
-      if (!localCrop || !layout.scale) return;
+      if (!localCrop || !layout.scale || !containerRef.current) return;
       e.preventDefault();
       e.stopPropagation();
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      
+      // CRITICAL: Capture on the container so we can drag outside the handle bounds freely
+      containerRef.current.setPointerCapture(e.pointerId);
+
       setDragMode(mode);
       setDragStart({
           ...dragStart,
@@ -714,6 +706,49 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
           cropW: localCrop.width,
           cropH: localCrop.height
       });
+  };
+
+  const handleCanvasPointerDown = (e: React.PointerEvent) => {
+    if (!layout.scale || !containerRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    if (!isCropMode) {
+        const hit = getLogoInteraction(mouseX, mouseY);
+        
+        if (hit) {
+            setActiveLogoId(hit.logo.id);
+            const mode = hit.type === 'rotate' ? 'rotate_logo' : hit.type === 'resize' ? 'scale_logo' : 'move_logo';
+            setDragMode(mode);
+            
+            const drawW = layout.width;
+            const drawH = layout.height;
+            const cx = hit.logo.x * drawW;
+            const cy = hit.logo.y * drawH;
+
+            setDragStart({
+                ...dragStart,
+                x: e.clientX,
+                y: e.clientY,
+                logoX: hit.logo.x,
+                logoY: hit.logo.y,
+                logoScale: hit.logo.scale,
+                logoRotation: hit.logo.rotation,
+                centerX: cx,
+                centerY: cy
+            });
+            containerRef.current.setPointerCapture(e.pointerId);
+            return;
+        } else {
+            setActiveLogoId(null);
+        }
+    }
   };
 
   const handleBringToFront = (e: React.MouseEvent) => {
@@ -753,7 +788,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
 
   if (isGeneratingView) {
       return (
-        <div className="flex-1 h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 transition-colors">
+        <div className="flex-1 h-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-950">
             <div className="flex flex-col items-center gap-2">
                 <Loader2 className="animate-spin text-blue-500" size={32} />
                 <span className="text-zinc-500 text-sm">Rotating View...</span>
@@ -766,7 +801,13 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
   const isLayoutSynced = layout.key.startsWith(`${photo.id}-${photo.rotation}`);
 
   return (
-    <div ref={containerRef} className="flex-1 h-full relative flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 overflow-hidden select-none touch-none transition-colors duration-300">
+    <div 
+        ref={containerRef} 
+        className="flex-1 h-full relative flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 overflow-hidden select-none touch-none"
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp} // Safety to stop drag if mouse leaves window
+    >
       
       {dragMode === 'rotate_logo' && activeLogoId && (
         <div className="absolute z-30 bg-black/80 text-white px-2 py-1 rounded text-xs pointer-events-none transform -translate-x-1/2 -translate-y-full" 
@@ -779,7 +820,7 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       )}
 
       {activeLogoId && !isCropMode && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl rounded-full px-4 py-2 flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-200">
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl rounded-full px-4 py-2 flex items-center gap-3">
              <button onClick={handleSendToBack} title="Send Backward" className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors"><SendToBack size={18} /></button>
              <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-700" />
              <button onClick={handleBringToFront} title="Bring Forward" className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 transition-colors"><BringToFront size={18} /></button>
@@ -791,10 +832,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
       <div style={{ width: layout.width, height: layout.height, position: 'relative' }}>
         <canvas 
             ref={canvasRef} 
-            className="block shadow-xl dark:shadow-none cursor-crosshair" 
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
+            className="block shadow-xl dark:shadow-none"
+            onPointerDown={handleCanvasPointerDown}
         />
 
         {!isCropMode && (
@@ -813,7 +852,8 @@ export const CanvasView: React.FC<CanvasViewProps> = ({
                         top: toStyle(localCrop.y),
                         width: toStyle(localCrop.width),
                         height: toStyle(localCrop.height),
-                        pointerEvents: 'all'
+                        pointerEvents: 'auto',
+                        willChange: 'left, top, width, height' // Optimize rendering performance
                     }}
                     onPointerDown={(e) => handleCropPointerDown(e, 'move_crop')}
                 >

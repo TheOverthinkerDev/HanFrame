@@ -31,6 +31,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   
+  // Performance Settings
+  const [useGPU, setUseGPU] = useState(true);
+  
   // Assets State (Session based) - Now managed here but passed to Right Sidebar
   const [uploadedFrames, setUploadedFrames] = useState<Asset[]>([]);
   const [uploadedLogos, setUploadedLogos] = useState<Asset[]>([]);
@@ -692,7 +695,7 @@ export default function App() {
 
   return (
     <div 
-      className="flex flex-col h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-white overflow-hidden selection:bg-blue-500 selection:text-white transition-colors duration-300 font-sans"
+      className="flex flex-col h-screen bg-zinc-50 dark:bg-black text-zinc-900 dark:text-white overflow-hidden selection:bg-blue-500 selection:text-white font-sans"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -718,7 +721,7 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="h-12 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0 transition-colors duration-300">
+      <header className="h-12 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-4 z-20 shrink-0">
         <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
                 <Sparkles className="text-blue-600 dark:text-blue-500" size={20} />
@@ -778,7 +781,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         
         {/* Left Area: Canvas + Filmstrip */}
-        <div className="flex-1 flex flex-col relative bg-zinc-100 dark:bg-zinc-950/50 transition-colors duration-300 min-w-0">
+        <div className="flex-1 flex flex-col relative bg-zinc-100 dark:bg-zinc-950/50 min-w-0">
           <main className="flex-1 relative overflow-hidden flex flex-col">
             {selectedPhoto ? (
                 <CanvasView 
@@ -788,6 +791,7 @@ export default function App() {
                 onCommitCrop={handleCropCommit}
                 aspectRatio={aspectRatio}
                 onLogosChange={handleLogosChange}
+                useGPU={useGPU}
                 />
             ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 dark:text-zinc-600">
@@ -831,6 +835,9 @@ export default function App() {
           onBatchAuto={handleBatchAutoAdjust}
           onStraightenChange={handleStraightenChange}
           onStraightenCommit={handleStraightenCommit}
+          // GPU Settings
+          useGPU={useGPU}
+          onToggleGPU={() => setUseGPU(!useGPU)}
           // Asset Props passed down
           uploadedFrames={uploadedFrames}
           uploadedLogos={uploadedLogos}

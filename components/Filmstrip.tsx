@@ -13,7 +13,7 @@ interface FilmstripProps {
 
 export const Filmstrip: React.FC<FilmstripProps> = ({ photos, selectedId, onSelect, onAdd, onRemove }) => {
   return (
-    <div className="h-28 bg-white/90 dark:bg-zinc-950/90 border-t border-zinc-200 dark:border-zinc-800 backdrop-blur-md flex flex-col shrink-0 transition-colors duration-300">
+    <div className="h-28 bg-white/90 dark:bg-zinc-950/90 border-t border-zinc-200 dark:border-zinc-800 flex flex-col shrink-0">
       
       {/* Strip Container */}
       <div className="flex-1 flex overflow-x-auto overflow-y-hidden items-center px-4 gap-3 custom-scrollbar">

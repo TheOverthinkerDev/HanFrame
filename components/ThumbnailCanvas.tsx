@@ -7,7 +7,7 @@ interface ThumbnailCanvasProps {
   className?: string;
 }
 
-export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, className }) => {
+export const ThumbnailCanvas = React.memo(({ photo, className }: ThumbnailCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -163,4 +163,16 @@ export const ThumbnailCanvas: React.FC<ThumbnailCanvasProps> = ({ photo, classNa
         }}
     />
   );
-};
+}, (prev, next) => {
+    // Custom comparison to effectively use React.memo even if photo object reference changes slightly.
+    // We only care if visual properties changed.
+    return prev.photo.id === next.photo.id &&
+           prev.photo.thumbnailUrl === next.photo.thumbnailUrl &&
+           prev.photo.frameOverlay === next.photo.frameOverlay &&
+           prev.photo.logos === next.photo.logos && 
+           prev.photo.rotation === next.photo.rotation &&
+           prev.photo.crop === next.photo.crop &&
+           prev.photo.straighten === next.photo.straighten &&
+           prev.photo.adjustments === next.photo.adjustments && 
+           prev.className === next.className;
+});

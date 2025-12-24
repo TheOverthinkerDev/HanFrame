@@ -5,7 +5,7 @@ import { formatBytes, calculateReadableRatio } from '../utils/processor';
 import { 
     Wand2, RotateCcw, RotateCw, Crop, Layers, Scissors, Zap, 
     Sun, Palette, Layout, Sliders, Image as ImageIcon, Plus, 
-    Trash2, Copy, X, Pencil, Frame, Stamp, Check 
+    Trash2, Copy, X, Pencil, Frame, Stamp, Check, Cpu 
 } from 'lucide-react';
 
 // --- Types ---
@@ -27,6 +27,10 @@ interface SidebarProps {
   onBatchAuto: () => void;
   onStraightenChange: (val: number) => void;
   onStraightenCommit: () => void;
+  
+  // GPU
+  useGPU: boolean;
+  onToggleGPU: () => void;
 
   // Asset Props (Previously in LeftSidebar)
   uploadedFrames: Asset[];
@@ -132,7 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
   if (!props.photo) {
     return (
-      <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6 flex items-center justify-center text-zinc-500 transition-colors">
+      <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6 flex items-center justify-center text-zinc-500">
         <div className="text-center">
             <Sliders size={48} className="mx-auto mb-4 opacity-20" />
             <p className="text-sm">Select a photo to edit</p>
@@ -149,7 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   const ratioStr = calculateReadableRatio(effW, effH);
 
   return (
-    <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex flex-col h-full overflow-hidden transition-colors duration-300">
+    <div className="w-80 border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex flex-col h-full overflow-hidden">
       
       {/* Photo Info Header */}
       <div className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/30 dark:bg-zinc-900/30">
@@ -176,21 +180,21 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
       <div className="flex shrink-0 border-b border-zinc-200 dark:border-zinc-800">
           <button 
             onClick={() => handleTabChange('tune')}
-            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'tune' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'tune' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
           >
               <Sliders size={18} /> Tune
               {activeTab === 'tune' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
           </button>
           <button 
             onClick={() => handleTabChange('crop')}
-            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'crop' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'crop' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
           >
               <Crop size={18} /> Crop
               {activeTab === 'crop' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
           </button>
           <button 
             onClick={() => handleTabChange('layers')}
-            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider transition-all relative ${activeTab === 'layers' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
+            className={`flex-1 py-4 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'layers' ? 'text-blue-600 dark:text-blue-500' : 'text-zinc-400 dark:text-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}
           >
               <Layers size={18} /> Layers
               {activeTab === 'layers' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-500" />}
@@ -202,7 +206,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         
         {/* === TUNE TAB === */}
         {activeTab === 'tune' && (
-            <div className="space-y-8 animate-in slide-in-from-right-4 fade-in duration-300">
+            <div className="space-y-8">
                 {/* Auto & Batch */}
                 <div className="grid grid-cols-2 gap-2">
                     <button 
@@ -217,6 +221,25 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                         title="Copy these settings to all photos"
                     >
                         <Copy size={14} /> Sync All
+                    </button>
+                </div>
+
+                {/* GPU Toggle */}
+                 <div className="flex items-center justify-between py-2 px-3 bg-zinc-50 dark:bg-zinc-900/50 rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <div className="flex items-center gap-2">
+                         <div className={`p-1 rounded-full ${props.useGPU ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-800'}`}>
+                             <Cpu size={14} />
+                         </div>
+                         <div className="flex flex-col">
+                             <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">GPU Acceleration</span>
+                             <span className="text-[9px] text-zinc-400">{props.useGPU ? 'Enabled' : 'Disabled'}</span>
+                         </div>
+                    </div>
+                    <button 
+                        onClick={props.onToggleGPU}
+                        className={`w-8 h-4 rounded-full p-0.5 transition-colors ${props.useGPU ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-700'}`}
+                    >
+                        <div className={`w-3 h-3 bg-white rounded-full shadow-sm transition-transform ${props.useGPU ? 'translate-x-4' : 'translate-x-0'}`} />
                     </button>
                 </div>
 
@@ -254,7 +277,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
         {/* === CROP TAB === */}
         {activeTab === 'crop' && (
-            <div className="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
+            <div className="space-y-6">
                 
                 {/* Done / Confirm Crop Button */}
                 <button 
@@ -316,7 +339,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
         {/* === LAYERS TAB (Merged Assets) === */}
         {activeTab === 'layers' && (
-             <div className="space-y-6 animate-in slide-in-from-right-4 fade-in duration-300">
+             <div className="space-y-6">
                 
                 {/* --- FRAMES SUB-SECTION --- */}
                 <div>
